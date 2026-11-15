@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring — Alerts & Thresholds</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="monitoring/alerts">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Monitoring<span class="sep">›</span>Alerts</nav>
+<header class="page-header">
+  <h1>Alerts &amp; thresholds — being told before the users tell you</h1>
+  <p class="lead">
+    Out of the box, replication fails silently (risk ⚠ <em>Monitoring gap</em>). This page wires up the three
+    layers that fix that: canned replication alerts, agent-state checks, and threshold warnings.
+  </p>
+</header>
+
+<h2>Layer 1 — the canned replication alerts</h2>
+<p>
+  Configuring a distributor pre-creates (disabled) SQL Agent alerts on the distributor. Enable the ones you need,
+  attach operators/notifications, and they fire on the corresponding message IDs:
+</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Alert</th><th>Error</th><th>Fires when</th><th>Enable?</th></tr></thead>
+  <tbody>
+    <tr><td>Replication: agent failure</td><td>14151</td><td>Any replication agent fails (after retries)</td><td><strong>Always</strong></td></tr>
+    <tr><td>Replication: agent retry</td><td>14152</td><td>Agent error → retrying (transient errors show here first)</td><td>Yes — early warning</td></tr>
+    <tr><td>Replication: expired subscription dropped</td><td>14157</td><td>Cleanup removed an expired subscription</td><td><strong>Always</strong> — this means a reinit is now mandatory</td></tr>
+    <tr><td>Replication: Subscriber has failed data validation</td><td>20574</td><td>Validation found non-convergence</td><td>Yes, if you run validations (you should)</td></tr>
+    <tr><td>Replication: Subscriber has passed data validation</td><td>20575</td><td>Validation OK</td><td>Optional (ticket-closing evidence)</td></tr>
+    <tr><td>Replication: agent custom shutdown</td><td>20578</td><td>Agent shut down by custom condition</td><td>Situational</td></tr>
+    <tr><td>Peer-to-peer conflict detection alert</td><td>22815</td><td>P2P conflict detected — agents stopped</td><td><strong>Always</strong> in P2P topologies</td></tr>
+  </tbody>
+</table></div>
+<pre data-label="T-SQL — enable + wire an alert"><code class="sql">-- operator (once)
+EXEC msdb.dbo.sp_add_operator @name = N'DBA-OnCall',
+     @email_address = N'dba-oncall@example.com';
+
+-- enable the canned alert and attach notification
+EXEC msdb.dbo.sp_update_alert @name = N'Replication: agent failure', @enabled = 1;
+EXEC msdb.dbo.sp_add_notification
+     @alert_name = N'Replication: agent failure',
+     @operator_name = N'DBA-OnCall', @notification_method = 1;  -- email
+
+-- verify what exists
+SELECT name, enabled, message_id FROM msdb.dbo.sysalerts WHERE name LIKE 'Replication%';
+</code></pre>
+<p>Database Mail must be configured and SQL Agent set to use it (Agent properties → Alert System) or nothing sends — the most common reason "alerts were on but nobody was told".</p>
+
+<h2>Layer 2 — agent state &amp; latency check job</h2>
+<p>
+  Alerts fire on <em>failures</em>. A <em>stopped</em> or silently idle agent never fails — cover it with a scheduled
+  check job (every 5–10 min) feeding your monitoring platform:
+</p>
+<pre data-label="T-SQL — watchdog query (distributor)"><code class="sql">-- continuous REPL jobs that are NOT currently executing = incident
+SELECT j.name
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+WHERE c.name IN ('REPL-LogReader','REPL-Distribution')   -- continuous categories
+  AND j.enabled = 1
+  AND NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity a
+                  WHERE a.job_id = j.job_id
+                    AND a.start_execution_date IS NOT NULL
+                    AND a.stop_execution_date IS NULL);
+
+-- subscriptions in failed/retrying state
+USE distribution;
+SELECT publication, subscriber_db = s.subscriber_db, s.status
+FROM dbo.MSdistribution_agents a
+JOIN dbo.MSsubscriptions sub ON sub.agent_id = a.id
+JOIN dbo.MSpublications p    ON p.publication_id = sub.publication_id
+CROSS APPLY (SELECT TOP 1 runstatus AS status, subscriber_db = a.subscriber_db
+             FROM dbo.MSdistribution_history h
+             WHERE h.agent_id = a.id ORDER BY h.timestamp DESC) s
+WHERE s.status IN (5, 6);   -- 5 retry, 6 fail
+</code></pre>
+<p>Add the <a href="tracer-tokens.html">tracer-token latency job</a> as the third check, and the "Replication agents checkup" job (created with the distributor) acts as a built-in heartbeat: it raises error 20554/20557 — alertable — when an agent stops logging progress.</p>
+
+<h2>Layer 3 — Replication Monitor threshold warnings</h2>
+<p>Set per subscription in Replication Monitor (<em>Warnings</em> tab); they change status to ⚠ and raise messages 20572/20573 which you can also alert on:</p>
+<ul>
+  <li><strong>Latency</strong> (transactional): set to your SLA (e.g. 60 s), not the default 30 s if that just creates noise.</li>
+  <li><strong>Expiration</strong>: warn at 70–80% of retention — leaves ~3 days of runway on default retention.</li>
+  <li><strong>Merge</strong>: sync duration and rows/sec thresholds for slow-link detection.</li>
+</ul>
+
+<h2>What a sensible paging policy looks like</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Event</th><th>Severity</th><th>Response</th></tr></thead>
+  <tbody>
+    <tr><td>Agent failure (14151), P2P conflict (22815), expired subscription (14157)</td><td>Page now</td><td>Runbook: <a href="../troubleshooting/common-errors.html">common errors</a></td></tr>
+    <tr><td>Latency &gt; SLA for 2 consecutive checks; agent retrying (14152) &gt; 15 min</td><td>Urgent ticket</td><td>Three-queue triage (<a href="../architecture/overview.html">overview</a>)</td></tr>
+    <tr><td>Distribution DB size growth trend; validation failure (20574)</td><td>Next business day</td><td>Capacity/convergence runbooks</td></tr>
+    <tr><td>Validation passed, token latency normal</td><td>Log only</td><td>—</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout ok">
+  <div class="co-title">✅ Test the whole chain once a quarter</div>
+  <p>Stop a Distribution Agent in a test window and confirm a human actually gets paged within the promised time.
+  Alert chains rot: operators leave, Database Mail profiles break, thresholds drift. The quarterly fire-drill catches it.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

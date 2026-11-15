@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transactional Replication</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="types/transactional">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Types<span class="sep">›</span>Transactional</nav>
+<header class="page-header">
+  <h1>Transactional Replication</h1>
+  <p class="lead">
+    The workhorse. Committed transactions are read from the publisher's log, queued at the distributor,
+    and replayed at each subscriber <strong>in commit order</strong>, typically within seconds. One-way by
+    design: publisher writes, subscribers read.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="12" viewBox="0 0 960 330" role="img" aria-label="Transactional replication pipeline with LSN ordering">
+    <defs><marker id="trarw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <!-- commit sequence strip -->
+    <rect x="40" y="60" width="200" height="190" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="140" y="85" text-anchor="middle">Publisher log</text>
+    <g>
+      <rect x="60" y="100" width="160" height="22" rx="4" fill="var(--pub)" opacity=".9"/><text x="140" y="116" text-anchor="middle" fill="#fff" font-size="11" font-family="Consolas,monospace">Txn 101 · commit</text>
+      <rect x="60" y="128" width="160" height="22" rx="4" fill="var(--pub)" opacity=".7"/><text x="140" y="144" text-anchor="middle" fill="#fff" font-size="11" font-family="Consolas,monospace">Txn 102 · commit</text>
+      <rect x="60" y="156" width="160" height="22" rx="4" fill="var(--pub)" opacity=".5"/><text x="140" y="172" text-anchor="middle" fill="#fff" font-size="11" font-family="Consolas,monospace">Txn 103 · commit</text>
+      <rect x="60" y="184" width="160" height="22" rx="4" fill="var(--text-muted)" opacity=".35"/><text x="140" y="200" text-anchor="middle" fill="var(--text)" font-size="11" font-family="Consolas,monospace">Txn 104 · open…</text>
+    </g>
+    <text class="svg-label-xs" x="140" y="235" text-anchor="middle">only committed txns are harvested</text>
+
+    <rect x="330" y="120" width="150" height="56" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="405" y="143" text-anchor="middle">Log Reader</text>
+    <text class="svg-label-xs" x="405" y="160" text-anchor="middle">keeps LSN order</text>
+
+    <path d="M560,130 a55,13 0 1,0 110,0 a55,13 0 1,0 -110,0 M560,130 v45 a55,13 0 0,0 110,0 v-45" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.8"/>
+    <text class="svg-label-sm" x="615" y="157" text-anchor="middle">distribution</text>
+    <text class="svg-label-xs" x="615" y="205" text-anchor="middle">FIFO by xact_seqno</text>
+
+    <rect x="740" y="120" width="180" height="56" rx="8" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.8"/>
+    <text class="svg-label" x="830" y="143" text-anchor="middle">Subscriber apply</text>
+    <text class="svg-label-xs" x="830" y="160" text-anchor="middle">same order: 101, 102, 103…</text>
+
+    <path class="svg-edge" d="M240,148 H327" marker-end="url(#trarw)"/>
+    <path class="svg-edge" d="M480,148 H557" marker-end="url(#trarw)"/>
+    <path class="svg-edge" d="M670,148 H737" marker-end="url(#trarw)"/>
+
+    <path d="M240,148 H330" fill="none" stroke="none" data-flow data-start="0"   data-travel="1.1" data-dots="3" data-gap="0.5" data-color="var(--pub)" data-shape="cmd"/>
+    <path d="M480,148 H560" fill="none" stroke="none" data-flow data-start="1.3" data-travel="1.0" data-dots="3" data-gap="0.5" data-color="var(--pub)" data-shape="cmd"/>
+    <path d="M670,148 H740" fill="none" stroke="none" data-flow data-start="2.5" data-travel="1.0" data-dots="3" data-gap="0.5" data-color="var(--dist)" data-shape="cmd"/>
+
+    <g class="risk-marker" data-risk="log-reader-latency" transform="translate(240,122)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="dist-db-growth"     transform="translate(670,122)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="row-not-found"      transform="translate(920,122)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="large-transactions" transform="translate(40,62)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span>Strict ordering is the contract: a single stuck command stops everything behind it for that subscription.</span>
+  </div>
+</div>
+
+<h2>Why ordering is everything</h2>
+<p>
+  The Distribution Agent applies transactions in exactly the commit order of the publisher (<code>xact_seqno</code>,
+  derived from LSNs). This guarantees the subscriber is always a <em>consistent point-in-time image</em> of the
+  published articles — but it also means the pipeline is <strong>head-of-line blocking</strong>: one failing command
+  (constraint violation, missing row, timeout) halts delivery of everything behind it for that subscription. That is
+  why most transactional incidents present as "latency growing" and resolve to "one command erroring in a loop" —
+  find it with <code>sp_browsereplcmds</code> or the agent's verbose log.
+</p>
+
+<h2>Requirements & footprint</h2>
+<ul>
+  <li>Every published table needs a <strong>primary key</strong>.</li>
+  <li>The publication database log is part of the pipeline: plan for <a href="../architecture/publisher.html">log growth if the Log Reader stalls</a>.</li>
+  <li>Continuous agents: one Log Reader per published DB, one Distribution Agent per subscription (default).</li>
+  <li>Works publisher → subscriber across SQL Server versions (subscriber within two versions of the publisher), to Azure SQL Database (as subscriber), and even to non-SQL Server subscribers (Oracle — deprecated path).</li>
+</ul>
+
+<h2>Variants</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Variant</th><th>What changes</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Standard (read-only subscribers)</strong></td><td>The design described on this page</td><td>✅ The default choice</td></tr>
+    <tr><td><strong>Bidirectional transactional</strong></td><td>Two publications mirroring each other with <code>@loopback_detection='true'</code> — exactly 2 nodes, no conflict handling</td><td>Works, fragile; prefer P2P or merge for new designs</td></tr>
+    <tr><td><a href="peer-to-peer.html"><strong>Peer-to-peer</strong></a></td><td>All nodes publish and subscribe to each other; conflict <em>detection</em> built in</td><td>✅ Enterprise Edition</td></tr>
+    <tr><td><strong>Updatable subscriptions</strong></td><td>Immediate (2PC) or queued updates back to publisher</td><td><span class="badge danger">Deprecated</span></td></tr>
+  </tbody>
+</table></div>
+
+<h2>What a command actually looks like</h2>
+<pre data-label="T-SQL — inspect queued commands"><code class="sql">USE distribution;
+
+-- find the transaction stream for a publication's articles
+SELECT TOP 20 t.xact_seqno, t.entry_time, c.command_id, a.article
+FROM dbo.MSrepl_transactions t
+JOIN dbo.MSrepl_commands c ON c.xact_seqno = t.xact_seqno
+JOIN dbo.MSarticles a      ON a.article_id = c.article_id
+ORDER BY t.entry_time DESC;
+
+-- decode commands into readable text (the support tool for stuck commands)
+EXEC sp_browsereplcmds
+     @xact_seqno_start = '0x0000002B000001D8000A',
+     @xact_seqno_end   = '0x0000002B000001D8000A';
+-- → {CALL [sp_MSins_dboOrders] (123, N'ACME', 2026-11-15, ...)}
+</code></pre>
+
+<h2>Latency expectations & measurement</h2>
+<ul>
+  <li>Healthy steady-state latency is <strong>single-digit seconds</strong>; the floor is the sum of Log Reader polling (default 5 s), distributor write, and Distribution Agent polling/apply.</li>
+  <li>Measure precisely with <a href="../monitoring/tracer-tokens.html">tracer tokens</a>, continuously with <code>sp_replcounters</code> (publisher side) and Replication Monitor (per-subscription).</li>
+  <li>Tuning levers live on the agents — see <a href="../monitoring/performance.html">Performance & Latency</a>.</li>
+</ul>
+
+<h2>Setup pointers</h2>
+<p>
+  The full click-by-click and script setup is in the Setup section:
+  <a href="../setup/configure-distributor.html">configure the distributor</a> →
+  <a href="../setup/create-publication.html">create the publication</a> →
+  <a href="../setup/create-subscription.html">create the subscription</a>, or the whole thing as
+  <a href="../setup/scripting.html">one T-SQL script</a>.
+</p>
+
+</main>
+</div>
+</body>
+</html>

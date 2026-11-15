@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributor — Mechanics</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="architecture/distributor">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="overview.html">Architecture</a><span class="sep">›</span>Distributor</nav>
+<header class="page-header">
+  <h1><span class="badge dist">Distributor</span> — the store-and-forward heart</h1>
+  <p class="lead">
+    The Distributor hosts the <code>distribution</code> database: the queue between publishers and subscribers,
+    the agents' home base, their history, and the cleanup machinery. When replication breaks, this is where the
+    evidence lives — and where most of the disk-space incidents happen.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="12" viewBox="0 0 960 470" role="img" aria-label="Distribution database internals">
+    <defs>
+      <marker id="darw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/>
+      </marker>
+    </defs>
+
+    <rect class="svg-zone" x="180" y="50" width="600" height="360" rx="14"/>
+    <text class="svg-zone-label" x="195" y="73">distribution database</text>
+
+    <!-- incoming -->
+    <rect x="25" y="150" width="130" height="50" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="90" y="172" text-anchor="middle">Log Reader</text>
+    <text class="svg-label-xs" x="90" y="188" text-anchor="middle">writes batches</text>
+
+    <!-- MSrepl_transactions -->
+    <rect x="215" y="100" width="230" height="64" rx="8" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="330" y="124" text-anchor="middle">MSrepl_transactions</text>
+    <text class="svg-label-xs" x="330" y="140" text-anchor="middle">one row per txn · xact_seqno (LSN)</text>
+
+    <!-- MSrepl_commands -->
+    <rect x="215" y="195" width="230" height="110" rx="8" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="330" y="218" text-anchor="middle">MSrepl_commands</text>
+    <g>
+      <rect x="232" y="230" width="196" height="12" rx="2" fill="var(--dist)" opacity=".8"/>
+      <rect x="232" y="247" width="196" height="12" rx="2" fill="var(--dist)" opacity=".6"/>
+      <rect x="232" y="264" width="196" height="12" rx="2" fill="var(--dist)" opacity=".4"/>
+      <rect x="232" y="281" width="140" height="12" rx="2" fill="var(--dist)" opacity=".25" class="svg-blink"/>
+    </g>
+
+    <!-- subscriptions + history -->
+    <rect x="215" y="330" width="230" height="56" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-sm" x="330" y="352" text-anchor="middle">MSsubscriptions</text>
+    <text class="svg-label-xs" x="330" y="368" text-anchor="middle">delivery watermark per subscription</text>
+
+    <rect x="520" y="100" width="230" height="64" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-sm" x="635" y="124" text-anchor="middle">Agent history tables</text>
+    <text class="svg-label-xs" x="635" y="140" text-anchor="middle">MSlogreader_ / MSdistribution_history…</text>
+
+    <!-- cleanup -->
+    <rect x="520" y="195" width="230" height="64" rx="8" fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="635" y="219" text-anchor="middle">Cleanup jobs ♻</text>
+    <text class="svg-label-xs" x="635" y="235" text-anchor="middle">Distribution clean up · every 10 min</text>
+    <g class="svg-spin">
+      <circle cx="702" cy="243" r="7" fill="none" stroke="var(--warn)" stroke-width="2" stroke-dasharray="8 4"/>
+    </g>
+
+    <rect x="520" y="330" width="230" height="56" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-sm" x="635" y="352" text-anchor="middle">MSrepl_errors</text>
+    <text class="svg-label-xs" x="635" y="368" text-anchor="middle">last errors per agent session</text>
+
+    <!-- outgoing -->
+    <rect x="815" y="150" width="130" height="50" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="880" y="172" text-anchor="middle">Distribution</text>
+    <text class="svg-label-xs" x="880" y="188" text-anchor="middle">Agent reads</text>
+
+    <!-- edges -->
+    <path class="svg-edge" d="M155,175 C185,175 185,132 212,132" marker-end="url(#darw)"/>
+    <path class="svg-edge" d="M155,175 C185,175 185,250 212,250" marker-end="url(#darw)"/>
+    <path class="svg-edge" d="M445,132 C480,132 480,175 815,175" marker-end="url(#darw)" style="display:none"/>
+    <path class="svg-edge" d="M445,250 C600,290 760,210 812,180" marker-end="url(#darw)"/>
+    <path class="svg-edge svg-edge-dashed" d="M520,227 H445" marker-end="url(#darw)"/>
+    <text class="svg-label-xs" x="482" y="217" text-anchor="middle">deletes</text>
+
+    <path d="M155,175 C185,175 185,250 215,250" fill="none" stroke="none" data-flow data-start="0" data-travel="1.2" data-dots="3" data-gap="0.4" data-color="var(--pub)" data-shape="cmd"/>
+    <path d="M445,250 C600,290 760,210 815,180" fill="none" stroke="none" data-flow data-start="2.5" data-travel="1.6" data-dots="3" data-gap="0.45" data-color="var(--dist)" data-shape="cmd"/>
+
+    <g class="risk-marker" data-risk="dist-db-growth"    transform="translate(215,198)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="cleanup-blocking"  transform="translate(750,198)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="retention-expired" transform="translate(445,333)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="distributor-spof"  transform="translate(182,53)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="monitor-blindness" transform="translate(750,333)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--pub)"></span>incoming commands (Log Reader)</span>
+    <span><span class="legend-dot" style="background:var(--dist)"></span>outgoing commands (Distribution Agent)</span>
+  </div>
+</div>
+
+<h2>Local vs. remote distributor</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th></th><th>Local distributor</th><th>Remote distributor</th></tr></thead>
+  <tbody>
+    <tr><td>Placement</td><td>Same instance as the publisher (default)</td><td>Dedicated instance serving one or many publishers</td></tr>
+    <tr><td>Pros</td><td>Simple; no extra server</td><td>Offloads log reader & distribution agent CPU/IO from the publisher; central monitoring point</td></tr>
+    <tr><td>Cons</td><td>Replication load competes with OLTP</td><td>Extra hop, extra server to patch/backup; concentrates failure risk</td></tr>
+    <tr><td>Support note</td><td colspan="2">A publisher is bound to exactly one distributor. Changing distributors means dropping and recreating replication — document the mapping.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Inside the distribution database</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Object</th><th>Holds</th><th>Support relevance</th></tr></thead>
+  <tbody>
+    <tr><td><code>MSrepl_transactions</code></td><td>One row per replicated transaction (<code>xact_seqno</code> = publisher LSN)</td><td>Join point for latency and command analysis</td></tr>
+    <tr><td><code>MSrepl_commands</code></td><td>One row per command (an UPDATE touching 1000 rows = 1000 commands), serialized parameters</td><td>The table that grows; browse with <code>sp_browsereplcmds</code> — never query its binary column directly for meaning</td></tr>
+    <tr><td><code>MSsubscriptions</code></td><td>One row per article per subscription, with delivery state</td><td><code>status</code>: 0 inactive, 1 subscribed, 2 active — inactive after retention expiry</td></tr>
+    <tr><td><code>MSdistribution_history</code> / <code>MSlogreader_history</code> / <code>MSsnapshot_history</code> / <code>MSmerge_history</code></td><td>Agent run outcomes, messages, delivery rates, latency</td><td>Your incident timeline; Replication Monitor reads these</td></tr>
+    <tr><td><code>MSrepl_errors</code></td><td>Error detail per failed agent session</td><td>The actual error text when the job history is truncated</td></tr>
+    <tr><td><code>MSarticles</code>, <code>MSpublications</code>, <code>MSsubscriber_info</code></td><td>Topology metadata as the distributor sees it</td><td>Cross-check against publisher-side catalogs when metadata is suspected to be out of sync</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Retention — the two clocks</h2>
+<p>Two independent retention settings govern the distributor, and confusing them causes incidents:</p>
+<ol>
+  <li><strong>Distribution (transaction) retention</strong> — <code>@min_distretention</code> (default 0 h) / <code>@max_distretention</code> (default 72 h): how long delivered commands stay in <code>MSrepl_commands</code> before cleanup deletes them. Commands <em>not yet delivered</em> to some subscriber are kept regardless — until the second clock fires.</li>
+  <li><strong>Publication (subscription) retention</strong> — <code>@retention</code> on the publication (default 336 h = 14 days): how long a subscription may remain un-synchronized before it is deactivated/expired. Once expired, cleanup removes its commands and the subscription <strong>must be reinitialized</strong>.</li>
+</ol>
+<pre data-label="T-SQL — inspect retention and queue depth"><code class="sql">-- current retention settings
+EXEC sp_helpdistributiondb;                 -- min/max distribution retention, history retention
+EXEC sp_helppublication @publication = 'SalesPub';  -- retention column (hours)
+
+-- how deep is the queue?
+USE distribution;
+SELECT COUNT(*) AS pending_commands FROM dbo.MSrepl_commands WITH (NOLOCK);
+
+-- undistributed commands per subscription (what Replication Monitor shows)
+EXEC sp_replmonitorsubscriptionpendingcmds
+     @publisher = 'PUB01', @publisher_db = 'SalesDB',
+     @publication = 'SalesPub', @subscriber = 'SUB01',
+     @subscriber_db = 'SalesReporting', @subscription_type = 0;  -- 0 = push
+</code></pre>
+
+<h2>The cleanup jobs</h2>
+<p>Configuring a distributor creates a set of SQL Agent jobs on the distributor — know them by name:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Job</th><th>Default schedule</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Distribution clean up: distribution</strong></td><td>Every 10 min</td><td>Deletes delivered commands past retention (<code>sp_MSdistribution_cleanup</code>)</td></tr>
+    <tr><td><strong>Agent history clean up: distribution</strong></td><td>Every 10 min</td><td>Trims agent history per history retention (default 48 h)</td></tr>
+    <tr><td><strong>Expired subscription clean up</strong></td><td>Daily 01:00</td><td>Detects and drops expired subscriptions</td></tr>
+    <tr><td><strong>Reinitialize subscriptions having data validation failures</strong></td><td>On demand</td><td>Marks failed-validation subscriptions for reinit</td></tr>
+    <tr><td><strong>Replication agents checkup</strong></td><td>Every 10 min</td><td>Writes an error if agents stop logging history (heartbeat)</td></tr>
+    <tr><td><strong>Replication monitoring refresher for distribution</strong></td><td>Continuous</td><td>Refreshes cached metrics for Replication Monitor</td></tr>
+  </tbody>
+</table></div>
+<div class="callout warn">
+  <div class="co-title">⚠ Disabled cleanup = time bomb</div>
+  <p>Teams sometimes disable "Distribution clean up" during an incident because it blocks agents — and forget it.
+  The distribution DB then grows until the disk fills, taking down <em>every</em> publication through this distributor.
+  If you find cleanup disabled, treat it as an active incident: find out why, fix the root cause, re-enable, and let
+  it drain off-hours.</p>
+</div>
+
+<h2>Backing up the distributor</h2>
+<ul>
+  <li>The <code>distribution</code> database should be in <strong>simple recovery</strong> in most topologies and backed up regularly — losing it means rebuilding every publication.</li>
+  <li>With <code>sync with backup</code> enabled on publication + distribution DBs, the Log Reader will not hand out transactions that are not yet backed up at the publisher, guaranteeing restore-consistency at the cost of latency.</li>
+  <li>For HA, cluster the distributor instance or (SQL 2017 CU6+) place the distribution database in an Availability Group — check version-specific support before recommending.</li>
+</ul>
+
+<h2>Commands that act on the Distributor</h2>
+<p>Full list on <a href="../commands/distributor-commands.html">Distributor commands</a>. Core set:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_adddistributor</code> / <code>sp_dropdistributor</code></td><td>Make this instance a distributor / tear it down</td></tr>
+    <tr><td><code>sp_adddistributiondb</code></td><td>Create the distribution database (sizes, retention)</td></tr>
+    <tr><td><code>sp_adddistpublisher</code></td><td>Authorize a publisher to use this distributor (sets snapshot folder)</td></tr>
+    <tr><td><code>sp_changedistributiondb</code></td><td>Change retention settings</td></tr>
+    <tr><td><code>sp_browsereplcmds</code></td><td>Decode pending commands in <code>MSrepl_commands</code> to readable text</td></tr>
+    <tr><td><code>sp_replmonitorhelppublication</code> &amp; friends</td><td>The procs behind Replication Monitor — scriptable monitoring</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

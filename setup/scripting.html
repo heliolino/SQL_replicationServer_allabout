@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Full T-SQL Script</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="setup/scripting">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Setup<span class="sep">›</span>Full Script</nav>
+<header class="page-header">
+  <h1>The whole topology as one T-SQL script</h1>
+  <p class="lead">
+    Steps 1–3 combined into a single, commented, re-runnable script for a local-distributor transactional
+    topology (PUB01 publishes <code>SalesDB.dbo.Orders</code> to SUB01), plus the teardown script and how to
+    script an <em>existing</em> topology for disaster recovery.
+  </p>
+</header>
+
+<h2>Build script</h2>
+<pre data-label="T-SQL — full build (run at PUB01, which is its own distributor)"><code class="sql">/* ================================================================
+   SQL Server transactional replication — end-to-end build
+   Topology: PUB01 (publisher + local distributor) → SUB01 (push)
+   Replace: server names, paths, DOMAIN accounts, passwords.
+   ================================================================ */
+
+------------------------------------------------------------------
+-- STEP 1 · Distributor
+------------------------------------------------------------------
+USE master;
+IF NOT EXISTS (SELECT 1 FROM sys.servers WHERE is_distributor = 1)
+BEGIN
+    EXEC sp_adddistributor @distributor = @@SERVERNAME,
+         @password = N'StrongPassword!1';
+
+    EXEC sp_adddistributiondb @database = N'distribution',
+         @data_folder = N'D:\SQLData', @log_folder = N'E:\SQLLogs',
+         @max_distretention = 72, @history_retention = 48,
+         @security_mode = 1;
+
+    EXEC sp_adddistpublisher @publisher = @@SERVERNAME,
+         @distribution_db = N'distribution',
+         @working_directory = N'\\PUB01\ReplData',   -- UNC, not local!
+         @security_mode = 1;
+END
+
+------------------------------------------------------------------
+-- STEP 2 · Publication
+------------------------------------------------------------------
+EXEC sp_replicationdboption @dbname = N'SalesDB',
+     @optname = N'publish', @value = N'true';
+
+USE SalesDB;
+EXEC sp_addlogreader_agent
+     @job_login = N'DOMAIN\replLogReader', @job_password = N'***',
+     @publisher_security_mode = 1;
+
+EXEC sp_addpublication
+     @publication = N'SalesPub',
+     @repl_freq = N'continuous',
+     @sync_method = N'concurrent',
+     @retention = 336,
+     @allow_push = N'true', @allow_pull = N'true',
+     @independent_agent = N'true',
+     @immediate_sync = N'false',            -- keep the distribution DB lean
+     @allow_anonymous = N'false',
+     @status = N'active';
+
+EXEC sp_addpublication_snapshot
+     @publication = N'SalesPub',
+     @job_login = N'DOMAIN\replSnapshot', @job_password = N'***',
+     @publisher_security_mode = 1;
+
+EXEC sp_addarticle
+     @publication = N'SalesPub',
+     @article = N'Orders', @source_owner = N'dbo', @source_object = N'Orders',
+     @type = N'logbased', @pre_creation_cmd = N'drop',
+     @schema_option = 0x000000000803509F;
+
+------------------------------------------------------------------
+-- STEP 3 · Subscription (push)
+------------------------------------------------------------------
+EXEC sp_addsubscription
+     @publication = N'SalesPub',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting',
+     @subscription_type = N'Push', @sync_type = N'automatic',
+     @article = N'all', @update_mode = N'read only';
+
+EXEC sp_addpushsubscription_agent
+     @publication = N'SalesPub',
+     @subscriber = N'SUB01', @subscriber_db = N'SalesReporting',
+     @job_login = N'DOMAIN\replDistrib', @job_password = N'***',
+     @subscriber_security_mode = 1,
+     @frequency_type = 64;                  -- continuous
+
+------------------------------------------------------------------
+-- STEP 4 · Generate the initial snapshot
+------------------------------------------------------------------
+EXEC sp_startpublication_snapshot @publication = N'SalesPub';
+
+/* Verify afterwards:
+   EXEC sp_replcounters;                              -- log reader alive
+   SELECT TOP 5 * FROM distribution.dbo.MSsnapshot_history     ORDER BY time DESC;
+   SELECT TOP 5 * FROM distribution.dbo.MSdistribution_history ORDER BY time DESC;
+*/
+</code></pre>
+
+<h2>Teardown script (reverse order!)</h2>
+<pre data-label="T-SQL — clean removal"><code class="sql">USE SalesDB;
+-- 1. subscriptions first
+EXEC sp_dropsubscription @publication = N'SalesPub',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting', @article = N'all';
+
+-- 2. articles & publication
+EXEC sp_droparticle     @publication = N'SalesPub', @article = N'all';
+EXEC sp_droppublication @publication = N'SalesPub';
+
+-- 3. disable publishing on the DB (drops log reader machinery)
+EXEC sp_replicationdboption @dbname = N'SalesDB', @optname = N'publish', @value = N'false';
+
+-- 4. (optional, removes distributor entirely — affects ALL publications!)
+USE master;
+EXEC sp_dropdistpublisher @publisher = @@SERVERNAME;
+EXEC sp_dropdistributiondb @database = N'distribution';
+EXEC sp_dropdistributor;
+
+-- If normal drops error out on broken metadata, the heavy hammers are:
+--   at subscriber: EXEC sp_removedbreplication N'SalesReporting';
+--   at publisher : EXEC sp_removedbreplication N'SalesDB';
+--   at publisher : EXEC sp_dropsubscription ... @ignore_distributor = 1
+-- These strip metadata without talking to other servers — use last.
+</code></pre>
+
+<h2>Scripting an existing topology (DR essential)</h2>
+<ul>
+  <li><strong>SSMS:</strong> right-click a publication → <em>Generate Scripts…</em> → creation (and drop) scripts for the publication and all its subscriptions. Do this after <em>every</em> topology change and commit the output to source control.</li>
+  <li><strong>Why it matters:</strong> replication metadata is <em>not</em> fully recovered by restoring user databases. After a distributor loss, these scripts + a new snapshot (or initialize-from-backup) are your rebuild path.</li>
+  <li><strong>Inventory query</strong> for documentation drift:</li>
+</ul>
+<pre data-label="T-SQL — topology inventory (run at distributor)"><code class="sql">USE distribution;
+SELECT p.publisher_db, p.publication, p.publication_type,
+       s.subscriber_db, sub.name AS subscriber,
+       CASE s.subscription_type WHEN 0 THEN 'push' ELSE 'pull' END AS sub_type,
+       s.status
+FROM dbo.MSpublications p
+JOIN dbo.MSsubscriptions s   ON s.publication_id = p.publication_id
+JOIN sys.servers sub          ON sub.server_id = s.subscriber_id
+WHERE s.subscriber_db <> 'virtual'
+ORDER BY p.publication, subscriber;
+</code></pre>
+
+<h2>Backup/restore coordination rules</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Database</th><th>Rule</th></tr></thead>
+  <tbody>
+    <tr><td>Publication DB</td><td>Back up normally; restoring it breaks the LSN chain → plan on rebuild/reinit (⚠ <em>Restoring a published database</em> risk). <code>sync with backup</code> option ties log reader progress to backups if you need restore-consistency.</td></tr>
+    <tr><td>distribution</td><td>Back up regularly. Its loss = rebuild every publication from scripts.</td></tr>
+    <tr><td>msdb (each server)</td><td>Holds the agent jobs — part of the replication estate.</td></tr>
+    <tr><td>Subscription DB</td><td>Backups fine; <em>restores</em> desynchronize the watermark → reinitialize after any restore.</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

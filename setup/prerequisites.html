@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Prerequisites</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="setup/prerequisites">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Setup<span class="sep">›</span>Prerequisites</nav>
+<header class="page-header">
+  <h1>Prerequisites &amp; planning checklist</h1>
+  <p class="lead">
+    Most replication installs that go wrong, go wrong before the first wizard page: a missing feature,
+    a service account without share access, a <code>@@SERVERNAME</code> mismatch. Work through this page first.
+  </p>
+</header>
+
+<h2>1 · Feature &amp; edition requirements</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Check</th><th>Details</th></tr></thead>
+  <tbody>
+    <tr><td>Replication components installed</td><td>"SQL Server Replication" feature must be selected in setup on <strong>publisher, distributor, and subscriber</strong> instances. Verify: <code>SELECT SERVERPROPERTY('IsFullTextInstalled')</code> is irrelevant — check <code>sys.fn_installed_features</code> or re-run setup → Installed features.</td></tr>
+    <tr><td>Edition</td><td>Express can only be a <em>subscriber</em> (pull). Web edition: subscriber only. P2P requires Enterprise on all peers. Everything else works on Standard.</td></tr>
+    <tr><td>Version mix</td><td>Distributor version ≥ publisher version; subscriber within two versions of the publisher (transactional). Merge: subscriber ≤ publisher version.</td></tr>
+    <tr><td>SQL Server Agent</td><td>Running and set to <strong>Automatic</strong> start on every box that hosts agents. Replication is dead in the water without it.</td></tr>
+    <tr><td>Azure</td><td>Azure SQL DB: subscriber only (push, transactional/snapshot). Azure SQL MI: publisher/distributor/subscriber supported. Document which before promising anything.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>2 · Server naming — the classic trap</h2>
+<p>Replication refuses IPs and aliases for topology links; it wants the real instance names, consistent everywhere.</p>
+<pre data-label="T-SQL — verify names"><code class="sql">-- these two must match on every instance involved:
+SELECT @@SERVERNAME        AS server_name_variable,
+       SERVERPROPERTY('ServerName') AS serverproperty_name;
+
+-- if they differ (renamed machine, cloned VM):
+EXEC sp_dropserver 'OLDNAME';
+EXEC sp_addserver  'NEWNAME', 'local';
+-- then restart the SQL Server service and re-check
+</code></pre>
+<ul>
+  <li>All connections between replication servers use the <strong>instance name</strong> (e.g. <code>PUB01\SQL2022</code>). DNS must resolve it from every box; firewalls must allow 1433/instance port both ways.</li>
+  <li>Named instances need the SQL Browser service or fixed ports + explicit <code>server\instance,port</code> client aliases.</li>
+</ul>
+
+<h2>3 · Service &amp; agent accounts</h2>
+<p>Plan accounts before the wizards ask. Least-privilege per Microsoft guidance:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Agent</th><th>Process account needs</th><th>Connection needs</th></tr></thead>
+  <tbody>
+    <tr><td>Snapshot Agent</td><td>Windows account; <strong>write</strong> on snapshot share</td><td><code>db_owner</code> in distribution DB; <code>db_owner</code> in publication DB</td></tr>
+    <tr><td>Log Reader Agent</td><td>Windows account</td><td><code>db_owner</code> in distribution DB; <code>db_owner</code> in publication DB</td></tr>
+    <tr><td>Distribution Agent (push)</td><td>Windows account; <strong>read</strong> on snapshot share</td><td><code>db_owner</code> in distribution DB; <code>db_owner</code> in subscription DB; PAL membership</td></tr>
+    <tr><td>Distribution Agent (pull)</td><td>Account at the subscriber; <strong>read</strong> on snapshot share</td><td>PAL membership at publisher; <code>db_owner</code> in subscription DB</td></tr>
+    <tr><td>Merge Agent</td><td>As distribution agent (push/pull)</td><td>PAL; <code>db_owner</code> both ends</td></tr>
+  </tbody>
+</table></div>
+<div class="callout warn">
+  <div class="co-title">⚠ Don't run agents as the SQL Server service account "because it works"</div>
+  <p>It usually works because that account is over-privileged. Then someone hardens the service account or rotates it,
+  and replication breaks everywhere at once (see risk <em>Agent security / login failures</em>). One dedicated domain
+  account per agent type, documented, with passwords in a vault, is the supportable pattern.</p>
+</div>
+
+<h2>4 · The snapshot share</h2>
+<ol class="steps">
+  <li><strong>Create a folder on the distributor</strong> with room for a full copy of your largest publication (e.g. <code>D:\ReplData</code>).</li>
+  <li><strong>Share it</strong> as e.g. <code>\\DIST01\ReplData</code>. Share + NTFS permissions: Snapshot Agent account = Change/Modify; Distribution &amp; Merge agent accounts = Read.</li>
+  <li><strong>Always configure replication with the UNC path</strong>, never the local path — local paths break the moment you add a pull subscriber (⚠ <em>Snapshot folder permissions</em> risk).</li>
+</ol>
+
+<h2>5 · Database-level prerequisites</h2>
+<ul>
+  <li><strong>Transactional:</strong> every article table has a primary key. Find offenders:
+    <pre data-label="T-SQL"><code class="sql">SELECT s.name AS schema_name, t.name AS table_name
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE t.is_ms_shipped = 0
+  AND NOT EXISTS (SELECT 1 FROM sys.key_constraints k
+                  WHERE k.parent_object_id = t.object_id AND k.type = 'PK');</code></pre></li>
+  <li><strong>Merge:</strong> check for apps using <code>INSERT</code> without column lists (rowguid column will break them) and for existing <code>uniqueidentifier</code> columns you may want to designate as the rowguid.</li>
+  <li>Recovery model: any model works for transactional replication (the log keeps replicated records regardless), but <strong>FULL is recommended</strong> on publication DBs so you keep point-in-time restore.</li>
+  <li>Datatypes: <code>FILESTREAM</code>, sparse columns, and some CLR types have restrictions — review article datatype limits before promising a table can replicate.</li>
+</ul>
+
+<h2>6 · Capacity planning quick numbers</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Item</th><th>Rule of thumb</th></tr></thead>
+  <tbody>
+    <tr><td>Distribution DB size</td><td>Steady state: (commands/hour × retention hours) × ~1 KB. Size for your <em>longest tolerated subscriber outage</em>, not the average.</td></tr>
+    <tr><td>Distribution DB files</td><td>Pre-size data + log; autogrowth events during catch-up storms hurt. Put it on fast storage — every transaction is written here too.</td></tr>
+    <tr><td>Snapshot folder</td><td>≥ sum of published table data sizes (BCP format ≈ data size), × 2 if snapshots can overlap.</td></tr>
+    <tr><td>Publisher log</td><td>Add headroom for the longest expected Log Reader outage: log holds everything un-harvested.</td></tr>
+    <tr><td>Network</td><td>Change volume × command overhead must fit the link to each subscriber — especially for geo subscribers; consider pull + scheduled sync over slow links.</td></tr>
+  </tbody>
+</table></div>
+
+<h2>7 · Pre-flight checklist</h2>
+<ul>
+  <li>☐ Replication feature installed on all instances</li>
+  <li>☐ SQL Server Agent auto-start everywhere</li>
+  <li>☐ <code>@@SERVERNAME</code> correct on all instances; DNS + firewall verified both directions</li>
+  <li>☐ Agent accounts created, documented, share permissions set</li>
+  <li>☐ Snapshot share created and reachable from subscriber(s)</li>
+  <li>☐ PKs on all transactional articles / rowguid impact assessed for merge</li>
+  <li>☐ Distribution DB placement &amp; sizing agreed; retention values chosen consciously</li>
+  <li>☐ Backup plan updated: distribution DB + msdb (jobs) + publication DB are now a coordinated set</li>
+</ul>
+
+<p>Ready? Continue to <a href="configure-distributor.html">Step 1 — Configure the Distributor</a>.</p>
+
+</main>
+</div>
+</body>
+</html>

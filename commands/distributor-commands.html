@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributor Commands</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="commands/distributor-commands">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="index.html">Commands</a><span class="sep">›</span>Distributor</nav>
+<header class="page-header">
+  <h1><span class="badge dist">Distributor</span> commands</h1>
+  <p class="lead">Distribution database administration, retention control, queue inspection, and the monitor procs — the support engineer's main console.</p>
+</header>
+
+<h2>Setup &amp; configuration</h2>
+<pre data-label="T-SQL"><code class="sql">-- declare / inspect / remove the distributor role
+EXEC sp_adddistributor @distributor = @@SERVERNAME, @password = N'***';
+EXEC sp_get_distributor;                        -- is this box a distributor? which DB?
+EXEC sp_helpdistributor;                        -- full config incl. snapshot working directory
+EXEC sp_dropdistributor @no_checks = 0;         -- @no_checks=1 forces past orphans (☠ last resort)
+
+-- the distribution database itself
+EXEC sp_adddistributiondb @database = N'distribution',
+     @max_distretention = 72, @history_retention = 48, @security_mode = 1;
+EXEC sp_helpdistributiondb;
+
+-- retention changes (applies from next cleanup run)
+EXEC sp_changedistributiondb @database = N'distribution',
+     @property = N'max_distretention', @value = N'96';
+EXEC sp_changedistributiondb @database = N'distribution',
+     @property = N'history_retention', @value = N'72';
+
+-- publishers allowed to use this distributor
+EXEC sp_adddistpublisher @publisher = N'PUB01', @distribution_db = N'distribution',
+     @working_directory = N'\\DIST01\ReplData', @security_mode = 1;
+EXEC sp_helpdistpublisher;
+EXEC sp_changedistpublisher @publisher = N'PUB01',
+     @property = N'working_directory', @value = N'\\DIST01\ReplData2';
+</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ Retention changes are a two-edged tool</div>
+  <p>Raising <code>max_distretention</code> buys subscribers more offline runway but grows <code>MSrepl_commands</code>.
+  Lowering it below the time any subscriber lags marks that subscription for reinitialization. Change deliberately,
+  during calm, with queue depth in front of you.</p>
+</div>
+
+<h2>Queue inspection — the incident toolkit</h2>
+<pre data-label="T-SQL"><code class="sql">USE distribution;
+
+-- decode what's queued (THE stuck-command tool)
+EXEC sp_browsereplcmds
+     @xact_seqno_start = '0x0000002B000001D8000A',   -- from MSrepl_errors / agent error text
+     @xact_seqno_end   = '0x0000002B000001D8000A',
+     @publisher_database_id = 1;                      -- MSrepl_transactions.publisher_database_id
+-- output column 'command': {CALL [sp_MSins_dboOrders] (...)} — the exact failing statement
+
+-- queue depth / largest transactions / pending per subscription:
+SELECT COUNT(*) FROM dbo.MSrepl_commands WITH (NOLOCK);
+EXEC sp_replmonitorsubscriptionpendingcmds
+     @publisher = N'PUB01', @publisher_db = N'SalesDB', @publication = N'SalesPub',
+     @subscriber = N'SUB01', @subscriber_db = N'SalesReporting', @subscription_type = 0;
+
+-- full error text when job history is truncated
+SELECT TOP 20 time, CONVERT(nvarchar(4000), error_text) AS error_text
+FROM dbo.MSrepl_errors ORDER BY time DESC;
+</code></pre>
+
+<h2>Monitor procs (scriptable Replication Monitor)</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Proc</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_replmonitorhelppublisher</code></td><td>One row per publisher with worst-status rollup</td></tr>
+    <tr><td><code>sp_replmonitorhelppublication</code></td><td>Per publication: status, worst latency, agent states</td></tr>
+    <tr><td><code>sp_replmonitorhelpsubscription</code></td><td>Per subscription: status (6=failed, 5=retrying), latency, last sync</td></tr>
+    <tr><td><code>sp_replmonitorsubscriptionpendingcmds</code></td><td>Undistributed commands + estimated apply time</td></tr>
+    <tr><td><code>sp_replmonitorrefreshjob</code></td><td>Force-refresh of the monitor cache tables (MSreplication_monitordata)</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Cleanup machinery</h2>
+<pre data-label="T-SQL"><code class="sql">-- what the 'Distribution clean up: distribution' job actually runs:
+EXEC distribution.dbo.sp_MSdistribution_cleanup
+     @min_distretention = 0, @max_distretention = 72;
+
+-- history trim ('Agent history clean up' job):
+EXEC distribution.dbo.sp_MShistory_cleanup @history_retention = 48;
+
+-- expired subscriptions ('Expired subscription clean up' job, runs in each pub DB):
+EXEC sp_expired_subscription_cleanup;
+</code></pre>
+<ul>
+  <li>Running cleanup manually with a bigger batch window (off-hours) is a legitimate way to drain a bloated queue — monitor blocking while it runs.</li>
+  <li>Cleanup deletes only commands delivered to <strong>all</strong> subscriptions (or expired ones) — if the queue won't shrink, find the subscription holding the watermark: <code>SELECT agent_id, MIN(transaction_timestamp) FROM dbo.MSsubscriptions ...</code> or simply the Replication Monitor pending-commands view per subscription.</li>
+</ul>
+
+<h2>Agent profile management (stored at the distributor)</h2>
+<pre data-label="T-SQL"><code class="sql">EXEC sp_help_agent_profile;                             -- all profiles (agent_type 1,2,3,4,9)
+EXEC sp_help_agent_parameter @profile_id = 2;           -- parameters of one profile
+
+EXEC sp_add_agent_profile @profile_name = N'CatchUp-Distribution',
+     @agent_type = 3, @profile_type = 0,
+     @description = N'Temporary catch-up profile';
+-- then sp_add_agent_parameter per parameter, and assign via Replication Monitor
+-- or update MSdistribution_agents.profile_id (documented but low-level).
+</code></pre>
+
+<h2>Danger zone</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>Why it's here</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_dropdistributor @no_checks = 1, @ignore_distributor = 1</code></td><td>Forces distributor removal leaving orphaned metadata on publishers/subscribers — only for rebuilding a box that is already beyond repair</td></tr>
+    <tr><td>Manual <code>DELETE FROM MSrepl_commands</code></td><td>Never. Breaks watermark consistency; use cleanup procs/retention instead</td></tr>
+    <tr><td>Shrinking the distribution DB during business hours</td><td>Blocks agents; if you must reclaim space after a bloat incident, do it in a window</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

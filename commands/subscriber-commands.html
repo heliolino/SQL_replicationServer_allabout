@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subscriber Commands</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="commands/subscriber-commands">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="index.html">Commands</a><span class="sep">›</span>Subscriber</nav>
+<header class="page-header">
+  <h1><span class="badge sub">Subscriber</span> commands</h1>
+  <p class="lead">Creating, reinitializing, validating, and (cleanly) destroying subscriptions — with the orphan-cleanup procedures you need when a drop went wrong.</p>
+</header>
+
+<h2>Creating subscriptions</h2>
+<p>Full worked examples (push and pull) on the <a href="../setup/create-subscription.html">setup page</a>. Reference:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Proc</th><th>Run at</th><th>Creates</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_addsubscription</code></td><td>Publisher</td><td>Subscription registration (both push and pull need it)</td></tr>
+    <tr><td><code>sp_addpushsubscription_agent</code></td><td>Publisher</td><td>Push Distribution Agent job at the distributor</td></tr>
+    <tr><td><code>sp_addpullsubscription</code></td><td>Subscriber</td><td>Pull-side metadata (<code>MSreplication_subscriptions</code>)</td></tr>
+    <tr><td><code>sp_addpullsubscription_agent</code></td><td>Subscriber</td><td>Pull Distribution Agent job at the subscriber</td></tr>
+    <tr><td><code>sp_addmergesubscription</code> / <code>sp_addmergepullsubscription(_agent)</code></td><td>Publisher / Subscriber</td><td>Merge equivalents (+ priority for conflict resolution)</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Reinitialization — the big hammer, used precisely</h2>
+<pre data-label="T-SQL — at the publisher"><code class="sql">-- one subscription
+EXEC sp_reinitsubscription
+     @publication = N'SalesPub',
+     @article = N'all',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting',
+     @invalidate_snapshot = 1;    -- 1 = also generate a fresh snapshot
+
+-- then start the snapshot agent (unless a valid snapshot exists)
+EXEC sp_startpublication_snapshot @publication = N'SalesPub';
+
+-- merge flavor (adds @upload_first: push unsent subscriber changes up before reinit?)
+EXEC sp_reinitmergesubscription
+     @publication = N'FieldSalesPub',
+     @subscriber = N'DEV-LAPTOP-07', @subscriber_db = N'FieldSales',
+     @upload_first = N'true';
+</code></pre>
+<div class="callout danger">
+  <div class="co-title">🛑 Reinit checklist before you run it</div>
+  <ul>
+    <li>Subscriber tables will be dropped/truncated per article <code>@pre_creation_cmd</code> — <strong>warn the application owner</strong>.</li>
+    <li>Subscriber-side extras (indexes, triggers, permissions on those tables) vanish with <code>drop</code> — have their scripts ready.</li>
+    <li>For merge with unsynced subscriber changes: decide <code>@upload_first</code> consciously — <code>false</code> discards those changes forever.</li>
+    <li>Estimate snapshot generation + delivery time; a reinit during business hours can be a bigger outage than the original incident.</li>
+  </ul>
+</div>
+
+<h2>Validation from the subscription side</h2>
+<pre data-label="T-SQL"><code class="sql">-- queue validation (publisher side, results in distribution agent history)
+EXEC sp_publication_validation @publication = N'SalesPub', @rowcount_only = 2;
+
+-- compare one table directly and build a fix script (command line, any box):
+-- tablediff.exe -sourceserver PUB01 -sourcedatabase SalesDB -sourcetable Orders
+--   -destinationserver SUB01 -destinationdatabase SalesReporting -destinationtable Orders
+--   -f C:\Temp\fix_Orders.sql
+</code></pre>
+
+<h2>Dropping subscriptions — clean path and orphan path</h2>
+<pre data-label="T-SQL — clean removal"><code class="sql">-- PUSH: at the publisher
+EXEC sp_dropsubscription
+     @publication = N'SalesPub', @article = N'all',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting';
+
+-- PULL: both sides
+--   at the publisher:
+EXEC sp_dropsubscription @publication = N'SalesPub', @article = N'all',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting';
+--   at the subscriber:
+EXEC sp_droppullsubscription
+     @publisher = N'PUB01', @publisher_db = N'SalesDB', @publication = N'SalesPub';
+</code></pre>
+<pre data-label="T-SQL — when metadata is orphaned"><code class="sql">-- subscriber still thinks it's subscribed but publisher has no record (or vice versa):
+-- at the SUBSCRIBER, per orphaned subscription:
+EXEC sp_subscription_cleanup
+     @publisher = N'PUB01', @publisher_db = N'SalesDB', @publication = N'SalesPub';
+
+-- nuclear local cleanup at the subscriber (all replication metadata in the DB):
+EXEC sp_removedbreplication @dbname = N'SalesReporting';
+
+-- publisher-side force-drop ignoring an unreachable distributor:
+EXEC sp_dropsubscription @publication = N'SalesPub', @article = N'all',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting',
+     @ignore_distributor = 1;      -- ☠ leaves distributor metadata; clean there too
+</code></pre>
+
+<h2>Subscriber-side inspection</h2>
+<pre data-label="T-SQL — at the subscriber"><code class="sql">-- transactional subscriptions known locally + their LSN bookmark
+SELECT publisher, publisher_db, publication, distribution_agent,
+       transaction_timestamp
+FROM dbo.MSreplication_subscriptions;
+
+-- the auto-generated apply procs (= initialized as a subscriber)
+SELECT name FROM sys.procedures
+WHERE name LIKE 'sp[_]MSins[_]%' OR name LIKE 'sp[_]MSupd[_]%' OR name LIKE 'sp[_]MSdel[_]%';
+
+-- merge: what's tracked locally
+SELECT TOP 10 * FROM dbo.MSmerge_genhistory ORDER BY coldate DESC;
+SELECT COUNT(*) FROM dbo.MSmerge_contents;      -- change backlog
+SELECT COUNT(*) FROM dbo.MSmerge_tombstone;     -- delete backlog
+</code></pre>
+
+<h2>Identity ranges (merge / auto range management)</h2>
+<pre data-label="T-SQL"><code class="sql">-- current allocations
+SELECT * FROM MSmerge_identity_range_allocations ORDER BY time_of_allocation DESC;
+
+-- force a new range for the publisher (ranges for subscribers refresh at sync):
+EXEC sp_adjustpublisheridentityrange @publication = N'FieldSalesPub';
+
+-- check the enforcing constraint on the table
+SELECT name, definition FROM sys.check_constraints
+WHERE parent_object_id = OBJECT_ID('dbo.Orders') AND name LIKE 'repl_identity_range%';
+</code></pre>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Jobs & Executables</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="commands/agent-commands">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="index.html">Commands</a><span class="sep">›</span>Agents</nav>
+<header class="page-header">
+  <h1><span class="badge agent">Agent</span> jobs &amp; executables</h1>
+  <p class="lead">The anatomy of a replication agent job, the command-line parameters of each executable, and the job-control commands a support engineer uses daily.</p>
+</header>
+
+<h2>Anatomy of an agent job</h2>
+<p>Every agent job has three steps — knowing them explains the job history you read:</p>
+<ol class="steps">
+  <li><strong>"Replication agent startup message"</strong> — logs the start (<code>sp_MSadd_repl_commands…</code> infra).</li>
+  <li><strong>"Run agent."</strong> — the real step: runs the executable with its parameter string. This is where you temporarily add <code>-Output … -OutputVerboseLevel 2</code> for deep debugging.</li>
+  <li><strong>"Detect nonlogged agent shutdown."</strong> — runs if step 2 dies without logging a stop; writes the "The replication agent has not logged a progress message in 10 minutes" style heartbeat errors.</li>
+</ol>
+<pre data-label="T-SQL — find and control the jobs"><code class="sql">-- inventory by category
+SELECT j.name, c.name AS category, j.enabled
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+WHERE c.name LIKE 'REPL-%' ORDER BY c.name, j.name;
+
+-- start/stop (same as Replication Monitor's Start/Stop Synchronizing)
+EXEC msdb.dbo.sp_start_job @job_name = N'PUB01-SalesDB-SalesPub-SUB01-1';
+EXEC msdb.dbo.sp_stop_job  @job_name = N'PUB01-SalesDB-SalesPub-SUB01-1';
+
+-- read the parameter string of the Run agent step
+SELECT js.command
+FROM msdb.dbo.sysjobsteps js
+JOIN msdb.dbo.sysjobs j ON j.job_id = js.job_id
+WHERE j.name = N'PUB01-SalesDB-SalesPub-SUB01-1' AND js.step_id = 2;
+</code></pre>
+
+<h2>Executable parameter reference</h2>
+
+<h3><code>logread.exe</code> — Log Reader</h3>
+<pre data-label="Job step command (typical)"><code class="sql">-Publisher [PUB01] -PublisherDB [SalesDB] -Distributor [PUB01]
+-DistributorSecurityMode 1 -Continuous
+-- tuning: -ReadBatchSize 500  -PollingInterval 5  -MaxCmdsInTran 0
+--         -LogScanThreshold 500000  -QueryTimeout 1800
+</code></pre>
+
+<h3><code>distrib.exe</code> — Distribution Agent</h3>
+<pre data-label="Job step command (typical)"><code class="sql">-Publisher [PUB01] -PublisherDB [SalesDB] -Publication [SalesPub]
+-Distributor [PUB01] -SubscriptionType 0
+-Subscriber [SUB01] -SubscriberDB [SalesReporting] -SubscriberSecurityMode 1 -Continuous
+-- tuning:  -CommitBatchSize 100  -CommitBatchThreshold 1000
+--          -SubscriptionStreams 1  -QueryTimeout 1800  -LoginTimeout 15
+-- danger:  -SkipErrors 2601:2627:20598   (hides divergence — stopgap only)
+-- debug:   -Output C:\Temp\distrib.log -OutputVerboseLevel 2
+</code></pre>
+
+<h3><code>snapshot.exe</code> — Snapshot Agent</h3>
+<pre data-label="Job step command (typical)"><code class="sql">-Publisher [PUB01] -PublisherDB [SalesDB] -Publication [SalesPub] -Distributor [PUB01]
+-- tuning: -BcpBatchSize 100000  -MaxBcpThreads 1  -70Subscribers (legacy compat)
+</code></pre>
+
+<h3><code>replmerg.exe</code> — Merge Agent</h3>
+<pre data-label="Job step command (typical)"><code class="sql">-Publisher [PUB01] -PublisherDB [FieldSales] -Publication [FieldSalesPub]
+-Subscriber [DEV-LAPTOP-07] -SubscriberDB [FieldSales] -Distributor [PUB01]
+-- tuning:  -ExchangeType 3 (1 upload only, 2 download only, 3 both)
+--          -UploadGenerationsPerBatch 100  -DownloadGenerationsPerBatch 100
+--          -Validate 3 (rowcount+checksum after sync)
+--          -SrcThreads 4 -DestThreads 4
+</code></pre>
+
+<h2>Common agent-control procs</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>Affects</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_startpublication_snapshot</code></td><td><span class="badge agent">AGT</span></td><td>Kick off snapshot generation without hunting for the job name</td></tr>
+    <tr><td><code>sp_changelogreader_agent</code> / <code>sp_changepublication_snapshot</code> / <code>sp_changepushsubscription_agent</code> / <code>sp_changepullsubscription_agent</code></td><td><span class="badge agent">AGT</span></td><td>Rotate agent credentials and schedules — the proc family used in the runbook below</td></tr>
+    <tr><td><code>sp_add_agent_profile</code> / <code>sp_add_agent_parameter</code></td><td><span class="badge agent">AGT</span> <span class="badge dist">DIST</span></td><td>Create profiles; assign in Replication Monitor (agent → profile)</td></tr>
+    <tr><td><code>sp_MSenum_replication_agents</code></td><td><span class="badge dist">DIST</span></td><td>Enumerate agents + current status (what Monitor's Agents tab calls)</td></tr>
+    <tr><td><code>sp_enumcustomresolvers</code></td><td><span class="badge agent">AGT</span></td><td>List registered merge conflict resolvers</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Credential rotation runbook (the password-change incident)</h2>
+<ol class="steps">
+  <li><strong>Identify affected agents:</strong> which jobs run under / connect as the rotated account? (job step command strings + <code>sp_helpdistpublisher</code>, agent security pages.)</li>
+  <li><strong>Update per agent type:</strong>
+    <pre data-label="T-SQL"><code class="sql">-- log reader (run in the publication DB)
+EXEC sp_changelogreader_agent @job_login = N'DOMAIN\replLogReader', @job_password = N'NewPass!';
+
+-- snapshot agent
+EXEC sp_changepublication_snapshot @publication = N'SalesPub',
+     @job_login = N'DOMAIN\replSnapshot', @job_password = N'NewPass!';
+
+-- push distribution agent
+EXEC sp_changepushsubscription_agent
+     @publication = N'SalesPub', @subscriber = N'SUB01', @subscriber_db = N'SalesReporting',
+     @job_login = N'DOMAIN\replDistrib', @job_password = N'NewPass!';
+
+-- pull distribution agent (at the subscriber)
+EXEC sp_changepullsubscription_agent
+     @publisher = N'PUB01', @publisher_db = N'SalesDB', @publication = N'SalesPub',
+     @job_login = N'DOMAIN\replPull', @job_password = N'NewPass!';
+</code></pre></li>
+  <li><strong>Restart the agents</strong> (stop/start jobs) and verify one clean session per agent in history.</li>
+  <li><strong>Post a tracer token</strong> to confirm end-to-end flow.</li>
+</ol>
+
+<div class="callout warn">
+  <div class="co-title">⚠ Don't edit job step strings by hand for security changes</div>
+  <p>The <code>sp_change*_agent</code> procs update both the job and the replication metadata; hand-editing the job
+  step leaves metadata stale and the next wizard/script regeneration silently reverts your fix.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

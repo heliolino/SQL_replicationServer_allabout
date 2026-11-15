@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merge Replication</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="types/merge">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Types<span class="sep">›</span>Merge</nav>
+<header class="page-header">
+  <h1>Merge Replication</h1>
+  <p class="lead">
+    Built for <strong>everyone writes, everyone syncs eventually</strong>: field devices, branch offices,
+    occasionally-connected laptops. Triggers track changes at every node; the Merge Agent reconciles them
+    per sync session and <strong>resolves conflicts</strong> by rule instead of stopping.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="12" viewBox="0 0 960 380" role="img" aria-label="Merge replication change tracking and sync">
+    <defs><marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <!-- publisher node -->
+    <rect class="svg-zone" x="30" y="50" width="380" height="300" rx="14"/>
+    <text class="svg-zone-label" x="45" y="73">Publisher node</text>
+
+    <rect x="55" y="95" width="150" height="54" rx="8" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="130" y="117" text-anchor="middle">dbo.Orders</text>
+    <text class="svg-label-xs" x="130" y="133" text-anchor="middle">+ rowguid column</text>
+
+    <rect x="250" y="95" width="140" height="54" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-sm" x="320" y="113" text-anchor="middle">INS/UPD/DEL</text>
+    <text class="svg-label-xs" x="320" y="129" text-anchor="middle">merge triggers</text>
+
+    <rect x="55" y="230" width="335" height="90" rx="8" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="222" y="255" text-anchor="middle">Change tracking metadata</text>
+    <text class="svg-label-xs" x="222" y="275" text-anchor="middle">MSmerge_contents (changed rows · lineage)</text>
+    <text class="svg-label-xs" x="222" y="291" text-anchor="middle">MSmerge_tombstone (deletes) · MSmerge_genhistory (generations)</text>
+
+    <path class="svg-edge" d="M205,122 H247" marker-end="url(#marw)"/>
+    <path class="svg-edge" d="M320,149 V227" marker-end="url(#marw)"/>
+    <path d="M320,149 V230" fill="none" stroke="none" data-flow data-start="0" data-travel="0.8" data-dots="2" data-gap="0.5" data-color="var(--dist)"/>
+
+    <!-- merge agent -->
+    <rect x="470" y="170" width="170" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="555" y="195" text-anchor="middle">Merge Agent</text>
+    <text class="svg-label-xs" x="555" y="212" text-anchor="middle">sync session: ⇄ + resolve</text>
+
+    <!-- subscriber node -->
+    <rect class="svg-zone" x="700" y="50" width="230" height="300" rx="14"/>
+    <text class="svg-zone-label" x="715" y="73">Subscriber node</text>
+    <rect x="725" y="95" width="180" height="54" rx="8" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="815" y="117" text-anchor="middle">dbo.Orders</text>
+    <text class="svg-label-xs" x="815" y="133" text-anchor="middle">+ identical triggers</text>
+    <rect x="725" y="230" width="180" height="90" rx="8" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-xs" x="815" y="270" text-anchor="middle">MSmerge_contents</text>
+    <text class="svg-label-xs" x="815" y="286" text-anchor="middle">MSmerge_tombstone</text>
+
+    <path class="svg-edge" d="M390,275 C440,275 440,215 467,205" marker-end="url(#marw)" marker-start="url(#marw)"/>
+    <path class="svg-edge" d="M640,205 C680,215 680,275 722,275" marker-end="url(#marw)" marker-start="url(#marw)"/>
+
+    <path d="M390,275 C440,275 440,215 470,205" fill="none" stroke="none" data-flow data-start="2"   data-travel="1.1" data-dots="2" data-gap="0.5" data-color="var(--pub)"/>
+    <path d="M640,205 C680,215 680,275 725,275" fill="none" stroke="none" data-flow data-start="3.2" data-travel="1.1" data-dots="2" data-gap="0.5" data-color="var(--pub)"/>
+    <path d="M725,275 C680,275 680,215 640,205" fill="none" stroke="none" data-flow data-start="6"   data-travel="1.1" data-dots="2" data-gap="0.5" data-color="var(--sub)"/>
+    <path d="M470,205 C440,215 440,275 390,275" fill="none" stroke="none" data-flow data-start="7.2" data-travel="1.1" data-dots="2" data-gap="0.5" data-color="var(--sub)"/>
+
+    <g class="risk-marker" data-risk="merge-conflicts"   transform="translate(555,168)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="identity-ranges"   transform="translate(905,92)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="nonconverged-data" transform="translate(205,92)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--pub)"></span>download (publisher → subscriber)</span>
+    <span><span class="legend-dot" style="background:var(--sub)"></span>upload (subscriber → publisher)</span>
+    <span>No distributor queue: for merge, the distribution DB stores history only.</span>
+  </div>
+</div>
+
+<h2>What merge does to your schema</h2>
+<ul>
+  <li>Adds a <code>uniqueidentifier ROWGUIDCOL</code> column (default name <code>rowguid</code>) with a unique index to every article that lacks one — <strong>this changes INSERT statements that don't use column lists</strong>, a classic app-breaking surprise.</li>
+  <li>Creates INSERT/UPDATE/DELETE triggers on every article to log changes into <code>MSmerge_contents</code> / <code>MSmerge_tombstone</code>.</li>
+  <li>Groups changes into <strong>generations</strong> (batches per article/partition) recorded in <code>MSmerge_genhistory</code> — the unit of exchange between nodes.</li>
+  <li>Lineage metadata per row records which node changed what — the basis of conflict detection.</li>
+</ul>
+
+<h2>Conflict detection & resolution</h2>
+<ol class="steps">
+  <li><strong>Detect.</strong> During sync the agent compares row versions (lineage). A conflict = the same row (or column, with column-level tracking) changed at both nodes since the last sync.</li>
+  <li><strong>Resolve.</strong> The article's resolver picks a winner. Default: publisher/higher-priority node wins (subscriber priorities 0–99.9 set at subscription time). Alternatives: earliest/latest wins, additive, averaging, custom business-rule resolvers (COM or stored procedure based).</li>
+  <li><strong>Log.</strong> The losing version goes to conflict tables (<code>MSmerge_conflicts_info</code> + per-article conflict tables), viewable in the <strong>Conflict Viewer</strong> (SSMS → publication → View Conflicts) or via <code>sp_helpmergearticleconflicts</code>.</li>
+</ol>
+<div class="callout warn">
+  <div class="co-title">⚠ Conflicts are silent data loss unless someone reads the log</div>
+  <p>Merge never stops on a conflict — it resolves and moves on. If nobody reviews the conflict tables, losing
+  changes simply vanish from the loser's point of view. Make conflict-table review part of the operational runbook,
+  and design filters so two nodes rarely own the same row.</p>
+</div>
+
+<h2>Filters: the real superpower</h2>
+<p>
+  Merge supports <strong>parameterized row filters</strong> — each subscriber receives only its partition,
+  evaluated per-subscriber at sync time:
+</p>
+<pre data-label="T-SQL — parameterized filter"><code class="sql">EXEC sp_addmergearticle
+     @publication = N'FieldSalesPub',
+     @article = N'Orders', @source_owner = N'dbo', @source_object = N'Orders',
+     @subset_filterclause = N'SalesRep = HOST_NAME()';   -- each device gets its rows
+
+-- join filter: child tables follow their parent's partition
+EXEC sp_addmergefilter
+     @publication = N'FieldSalesPub',
+     @article = N'OrderLines',
+     @filtername = N'OrderLines_Orders',
+     @join_articlename = N'Orders',
+     @join_filterclause = N'OrderLines.OrderID = Orders.OrderID',
+     @join_unique_key = 1;
+</code></pre>
+<p>
+  With <em>precomputed partitions</em> (default when possible) partition membership is evaluated ahead of sync,
+  making per-device syncs fast. Changing a row's filter column moves it between partitions — a
+  <em>partition change</em>, one of the more expensive merge operations.
+</p>
+
+<h2>Identity management</h2>
+<p>
+  Since all nodes insert, merge manages identity columns by handing each node a <strong>range</strong>
+  (<code>@identity_range</code>, <code>@pub_identity_range</code>) enforced by a check constraint. When a node
+  exhausts ~80% of its range, a new one is allocated at next sync — <em>if</em> it can reach the publisher.
+  See the ⚠ marker: range exhaustion while offline is a classic field-device incident (error 548).
+</p>
+
+<h2>Sync sessions & schedules</h2>
+<ul>
+  <li>The Merge Agent is <strong>not continuous</strong> by default — it runs scheduled sync sessions (or on demand from the client, including via RMO / web sync).</li>
+  <li><strong>Web synchronization</strong> lets internet clients sync over HTTPS through IIS — no VPN or direct SQL connectivity.</li>
+  <li>Exchange order: upload subscriber changes first, then download. <code>-ExchangeType</code> can restrict to one direction.</li>
+  <li>Validation: run syncs with <code>-Validate</code> periodically, or <code>sp_validatemergesubscription</code>, to catch non-convergence.</li>
+</ul>
+
+<h2>Support quick checks</h2>
+<pre data-label="T-SQL — merge health"><code class="sql">-- conflict backlog
+SELECT * FROM MSmerge_conflicts_info ORDER BY conflict_time DESC;
+
+-- identity range state
+SELECT * FROM MSmerge_identity_range_allocations ORDER BY time_of_allocation DESC;
+
+-- sync history (at the distributor)
+SELECT TOP 50 * FROM distribution.dbo.MSmerge_history ORDER BY time DESC;
+
+-- metadata bloat: tombstones/contents should be cleaned by retention
+EXEC sp_mergemetadataretentioncleanup;   -- normally runs automatically per retention
+</code></pre>
+<div class="callout danger">
+  <div class="co-title">🛑 Merge retention (-MetadataRetentionCleanup) is unforgiving</div>
+  <p>A subscriber that doesn't sync within the publication retention period (default 14 days) is expired and must be
+  reinitialized — and metadata cleanup makes this unrecoverable by design. For fleets of devices, track "days since
+  last successful sync" per subscriber and alert well before the deadline.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

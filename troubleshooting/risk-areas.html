@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Risk Areas Checklist</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="troubleshooting/risk-areas">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Troubleshooting<span class="sep">›</span>Risk Areas</nav>
+<header class="page-header">
+  <h1>⚠ Risk areas — the consolidated support checklist</h1>
+  <p class="lead">
+    Every pulsing ⚠ marker from every diagram on this site, in one place: what can go wrong, the symptom,
+    a detection query, and the first response. High severity first. Use it as a health-check template for
+    topology reviews and as the index during incidents.
+  </p>
+</header>
+
+<div class="callout ok">
+  <div class="co-title">✅ How to use this page</div>
+  <p>Quarterly: run every detection query against your topology and record the results — most replication
+  disasters announce themselves weeks earlier as one of these items. During incidents: match the symptom column,
+  jump to the first response. The same content pops up when you click any ⚠ marker on the component diagrams.</p>
+</div>
+
+<div id="risk-list"><!-- populated from the risk registry in js/main.js --></div>
+
+<h2>Topology review extras (not tied to one component)</h2>
+<ul>
+  <li>☐ Replication creation scripts exist, current, in source control (<a href="../setup/scripting.html">scripting</a>)</li>
+  <li>☐ Distribution DB + msdb in backup schedules; restore of the distributor rehearsed on paper</li>
+  <li>☐ Agent accounts documented with owners; rotation runbook tested (<a href="../commands/agent-commands.html">runbook</a>)</li>
+  <li>☐ Alert chain fire-drilled this quarter (<a href="../monitoring/alerts.html">alerts</a>)</li>
+  <li>☐ Reinitialization impact (time + app outage) estimated per subscription <em>before</em> you need it</li>
+  <li>☐ Known subscriber-side customizations (indexes, triggers, permissions) scripted for post-reinit replay</li>
+</ul>
+
+</main>
+</div>
+</body>
+</html>

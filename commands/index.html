@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command Matrix</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="commands/index">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Commands<span class="sep">›</span>Matrix</nav>
+<header class="page-header">
+  <h1>Command Matrix — every command, mapped to its components</h1>
+  <p class="lead">
+    Filter by the component a command <strong>affects</strong>, or search by name/purpose. Badges:
+    <span class="badge pub">PUB</span> publisher · <span class="badge dist">DIST</span> distributor ·
+    <span class="badge sub">SUB</span> subscriber · <span class="badge agent">AGT</span> agents/jobs ·
+    <span class="badge danger">☠</span> destructive — read its page before running in production.
+  </p>
+</header>
+
+<div class="filter-bar" data-target="#cmdtable">
+  <input type="search" placeholder="Search commands… (e.g. retention, snapshot, cleanup)" aria-label="Search commands">
+  <button class="filter-chip active" data-filter="all">All</button>
+  <button class="filter-chip" data-filter="pub">Publisher</button>
+  <button class="filter-chip" data-filter="dist">Distributor</button>
+  <button class="filter-chip" data-filter="sub">Subscriber</button>
+  <button class="filter-chip" data-filter="agent">Agents</button>
+  <button class="filter-chip" data-filter="danger">☠ Destructive</button>
+  <span id="filter-count" class="badge neutral"></span>
+</div>
+
+<div class="tbl-wrap"><table id="cmdtable">
+  <thead><tr><th>Command</th><th>Run at</th><th>Affects</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <!-- distributor setup -->
+    <tr data-tags="dist"><td><code>sp_adddistributor</code></td><td>Distributor &amp; Publisher</td><td><span class="badge dist">DIST</span></td><td>Declare an instance a distributor / point a publisher at one</td></tr>
+    <tr data-tags="dist danger"><td><code>sp_dropdistributor</code> <span class="badge danger">☠</span></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Remove distributor role (all publications must be gone first; @no_checks bypasses — dangerous)</td></tr>
+    <tr data-tags="dist"><td><code>sp_adddistributiondb</code></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Create the distribution database with retention settings</td></tr>
+    <tr data-tags="dist danger"><td><code>sp_dropdistributiondb</code> <span class="badge danger">☠</span></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Drop a distribution database</td></tr>
+    <tr data-tags="dist pub"><td><code>sp_adddistpublisher</code> / <code>sp_dropdistpublisher</code></td><td>Distributor</td><td><span class="badge dist">DIST</span> <span class="badge pub">PUB</span></td><td>Authorize/remove a publisher on this distributor; sets snapshot folder</td></tr>
+    <tr data-tags="dist"><td><code>sp_changedistributiondb</code></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Change distribution/history retention</td></tr>
+    <tr data-tags="dist"><td><code>sp_changedistributor_password</code></td><td>Distributor + publishers</td><td><span class="badge dist">DIST</span></td><td>Rotate the distributor_admin link password</td></tr>
+    <tr data-tags="dist"><td><code>sp_helpdistributor</code> / <code>sp_get_distributor</code> / <code>sp_helpdistributiondb</code> / <code>sp_helpdistpublisher</code></td><td>Any role</td><td><span class="badge dist">DIST</span></td><td>Inspect distributor configuration (read-only)</td></tr>
+
+    <!-- publication -->
+    <tr data-tags="pub"><td><code>sp_replicationdboption</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Enable/disable a DB for publishing ('publish' / 'merge publish')</td></tr>
+    <tr data-tags="pub agent"><td><code>sp_addlogreader_agent</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge agent">AGT</span></td><td>Create the Log Reader Agent job for a published DB</td></tr>
+    <tr data-tags="pub"><td><code>sp_addpublication</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Create a snapshot/transactional/P2P publication</td></tr>
+    <tr data-tags="pub"><td><code>sp_changepublication</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Alter publication properties (retention, ddl replication, status…)</td></tr>
+    <tr data-tags="pub danger"><td><code>sp_droppublication</code> <span class="badge danger">☠</span></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge dist">DIST</span></td><td>Remove a publication (subscriptions first!)</td></tr>
+    <tr data-tags="pub agent"><td><code>sp_addpublication_snapshot</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge agent">AGT</span></td><td>Create the Snapshot Agent job for a publication</td></tr>
+    <tr data-tags="pub"><td><code>sp_addarticle</code> / <code>sp_changearticle</code> / <code>sp_droparticle</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Manage articles (tables, procs, views) in transactional/snapshot publications</td></tr>
+    <tr data-tags="pub"><td><code>sp_articlefilter</code> / <code>sp_articleview</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Row filter + its synchronization view for an article</td></tr>
+    <tr data-tags="pub"><td><code>sp_articlecolumn</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Column filtering (vertical partition) for an article</td></tr>
+    <tr data-tags="pub"><td><code>sp_addmergepublication</code> / <code>sp_addmergearticle</code> / <code>sp_addmergefilter</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Merge equivalents: publication, articles, join filters</td></tr>
+    <tr data-tags="pub"><td><code>sp_helppublication</code> / <code>sp_helparticle</code> / <code>sp_helpmergepublication</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Inspect publications/articles (read-only)</td></tr>
+    <tr data-tags="pub"><td><code>sp_grant_publication_access</code> / <code>sp_revoke_publication_access</code> / <code>sp_help_publication_access</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Manage the Publication Access List (PAL)</td></tr>
+
+    <!-- subscription -->
+    <tr data-tags="pub sub dist"><td><code>sp_addsubscription</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span> <span class="badge dist">DIST</span></td><td>Register a subscription (push or pull) to a publication</td></tr>
+    <tr data-tags="sub agent"><td><code>sp_addpushsubscription_agent</code></td><td>Publisher</td><td><span class="badge agent">AGT</span> <span class="badge dist">DIST</span></td><td>Create the push Distribution Agent job (at the distributor)</td></tr>
+    <tr data-tags="sub agent"><td><code>sp_addpullsubscription</code> + <code>sp_addpullsubscription_agent</code></td><td>Subscriber</td><td><span class="badge sub">SUB</span> <span class="badge agent">AGT</span></td><td>Create the pull side + pull Distribution Agent job (at the subscriber)</td></tr>
+    <tr data-tags="sub"><td><code>sp_addmergesubscription</code> / <code>sp_addmergepullsubscription</code></td><td>Publisher / Subscriber</td><td><span class="badge sub">SUB</span> <span class="badge agent">AGT</span></td><td>Merge push/pull subscriptions</td></tr>
+    <tr data-tags="pub sub danger"><td><code>sp_dropsubscription</code> / <code>sp_droppullsubscription</code> <span class="badge danger">☠</span></td><td>Publisher / Subscriber</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span> <span class="badge dist">DIST</span></td><td>Remove a subscription (clean both sides)</td></tr>
+    <tr data-tags="pub sub dist agent"><td><code>sp_reinitsubscription</code> / <code>sp_reinitmergesubscription</code></td><td>Publisher</td><td><span class="badge sub">SUB</span> <span class="badge dist">DIST</span> <span class="badge agent">AGT</span></td><td>Mark subscription(s) for fresh snapshot — heavy for subscriber apps</td></tr>
+    <tr data-tags="sub"><td><code>sp_subscription_cleanup</code></td><td>Subscriber</td><td><span class="badge sub">SUB</span></td><td>Remove orphaned subscription metadata after broken drops</td></tr>
+    <tr data-tags="sub"><td><code>sp_changesubscription</code></td><td>Publisher</td><td><span class="badge sub">SUB</span> <span class="badge agent">AGT</span></td><td>Change subscription properties incl. agent security</td></tr>
+    <tr data-tags="pub sub"><td><code>sp_helpsubscription</code> / <code>sp_helpsubscriberinfo</code></td><td>Publisher</td><td><span class="badge sub">SUB</span></td><td>Inspect subscriptions (read-only)</td></tr>
+
+    <!-- snapshot / init -->
+    <tr data-tags="pub agent"><td><code>sp_startpublication_snapshot</code></td><td>Publisher</td><td><span class="badge agent">AGT</span></td><td>Start the Snapshot Agent for a publication</td></tr>
+    <tr data-tags="agent"><td><code>snapshot.exe</code></td><td>Distributor (job step)</td><td><span class="badge agent">AGT</span></td><td>The Snapshot Agent executable; parameters via job step/profile</td></tr>
+
+    <!-- log reader internals -->
+    <tr data-tags="pub agent"><td><code>sp_replcmds</code></td><td>Publisher (internal)</td><td><span class="badge pub">PUB</span></td><td>Internal: Log Reader's harvest call. Only one session may run it per DB — running it manually in SSMS blocks the real Log Reader!</td></tr>
+    <tr data-tags="pub agent danger"><td><code>sp_repldone</code> <span class="badge danger">☠</span></td><td>Publisher (internal)</td><td><span class="badge pub">PUB</span> <span class="badge dist">DIST</span></td><td>Internal: advances the log truncation watermark. Manual reset = subscribers silently lose data</td></tr>
+    <tr data-tags="pub"><td><code>sp_replflush</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Flush the article definition cache (after sp_replcmds experiments)</td></tr>
+    <tr data-tags="pub"><td><code>sp_repltrans</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>List committed txns not yet harvested (read-only)</td></tr>
+    <tr data-tags="pub"><td><code>sp_replcounters</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Per-DB replication throughput + latency estimate (read-only)</td></tr>
+    <tr data-tags="pub"><td><code>DBCC OPENTRAN</code></td><td>Publisher</td><td><span class="badge pub">PUB</span></td><td>Shows oldest active + oldest replicated transaction pinning the log</td></tr>
+    <tr data-tags="agent"><td><code>logread.exe</code></td><td>Distributor (job step)</td><td><span class="badge agent">AGT</span></td><td>The Log Reader Agent executable (-ReadBatchSize, -MaxCmdsInTran…)</td></tr>
+
+    <!-- distributor ops -->
+    <tr data-tags="dist"><td><code>sp_browsereplcmds</code></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Decode queued commands to readable text — the stuck-command tool</td></tr>
+    <tr data-tags="dist agent"><td><code>sp_MSdistribution_cleanup</code></td><td>Distributor (job)</td><td><span class="badge dist">DIST</span></td><td>The proc behind 'Distribution clean up' job — deletes delivered commands past retention</td></tr>
+    <tr data-tags="dist"><td><code>sp_replmonitorhelppublication</code> / <code>…helpsubscription</code></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Replication Monitor's rollup data, scriptable (read-only)</td></tr>
+    <tr data-tags="dist"><td><code>sp_replmonitorsubscriptionpendingcmds</code></td><td>Distributor</td><td><span class="badge dist">DIST</span></td><td>Undistributed command count + estimated apply time (read-only)</td></tr>
+
+    <!-- monitoring / validation -->
+    <tr data-tags="pub dist"><td><code>sp_posttracertoken</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge dist">DIST</span> <span class="badge sub">SUB</span></td><td>Inject a latency-measuring token into the pipeline</td></tr>
+    <tr data-tags="dist"><td><code>sp_helptracertokenhistory</code> / <code>sp_helptracertokens</code> / <code>sp_deletetracertokenhistory</code></td><td>Publisher/Distributor</td><td><span class="badge dist">DIST</span></td><td>Read / list / purge tracer token results</td></tr>
+    <tr data-tags="pub sub agent"><td><code>sp_publication_validation</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>Queue rowcount/checksum validation for all articles (transactional)</td></tr>
+    <tr data-tags="pub sub agent"><td><code>sp_validatemergesubscription</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>Validate one merge subscription</td></tr>
+    <tr data-tags="sub"><td><code>tablediff.exe</code></td><td>Any (command line)</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>Compare publisher vs subscriber table; generate repair script</td></tr>
+    <tr data-tags="dist"><td><code>sqlmonitor.exe</code> (Replication Monitor)</td><td>Workstation</td><td><span class="badge dist">DIST</span></td><td>The monitoring GUI; reads distribution history tables</td></tr>
+
+    <!-- agents / profiles -->
+    <tr data-tags="agent dist"><td><code>sp_add_agent_profile</code> / <code>sp_help_agent_profile</code> / <code>sp_add_agent_parameter</code></td><td>Distributor</td><td><span class="badge agent">AGT</span> <span class="badge dist">DIST</span></td><td>Create/inspect agent profiles and their parameters</td></tr>
+    <tr data-tags="agent"><td><code>distrib.exe</code></td><td>Distributor or Subscriber</td><td><span class="badge agent">AGT</span></td><td>Distribution Agent executable (-CommitBatchSize, -SubscriptionStreams, -SkipErrors…)</td></tr>
+    <tr data-tags="agent"><td><code>replmerg.exe</code></td><td>Distributor or Subscriber</td><td><span class="badge agent">AGT</span></td><td>Merge Agent executable (-ExchangeType, -Validate…)</td></tr>
+    <tr data-tags="agent"><td><code>qrdrsvc.exe</code></td><td>Distributor</td><td><span class="badge agent">AGT</span></td><td>Queue Reader Agent (deprecated updatable subscriptions)</td></tr>
+
+    <!-- merge specifics -->
+    <tr data-tags="pub sub"><td><code>sp_adjustpublisheridentityrange</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>Allocate a new identity range when exhausted (merge/identity mgmt)</td></tr>
+    <tr data-tags="pub sub"><td><code>sp_helpmergearticleconflicts</code> / <code>sp_helpmergeconflictrows</code></td><td>Publisher</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>List merge conflict tables / rows</td></tr>
+    <tr data-tags="pub sub"><td><code>sp_mergemetadataretentioncleanup</code></td><td>Publisher/Subscriber</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>Clean merge tracking metadata per retention</td></tr>
+
+    <!-- teardown -->
+    <tr data-tags="pub sub danger"><td><code>sp_removedbreplication</code> <span class="badge danger">☠</span></td><td>Publisher or Subscriber</td><td><span class="badge pub">PUB</span> <span class="badge sub">SUB</span></td><td>Strip ALL replication metadata from a DB without touching other servers — teardown of last resort</td></tr>
+    <tr data-tags="dist danger"><td><code>sp_dropsubscriber</code> <span class="badge danger">☠</span></td><td>Publisher</td><td><span class="badge dist">DIST</span></td><td>Deregister a subscriber server entirely</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Detail pages</h2>
+<div class="card-grid">
+  <a class="card" href="publisher-commands.html"><h3><span class="badge pub">Publisher</span> commands</h3><p>Publications, articles, filters, log internals — with full syntax and gotchas.</p></a>
+  <a class="card" href="distributor-commands.html"><h3><span class="badge dist">Distributor</span> commands</h3><p>Distribution DB admin, retention, queue inspection, monitor procs.</p></a>
+  <a class="card" href="subscriber-commands.html"><h3><span class="badge sub">Subscriber</span> commands</h3><p>Subscriptions push/pull, reinit, cleanup, validation.</p></a>
+  <a class="card" href="agent-commands.html"><h3><span class="badge agent">Agent</span> jobs &amp; executables</h3><p>Job anatomy, command-line parameters, profiles.</p></a>
+</div>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring — Replication Monitor</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="monitoring/replication-monitor">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Monitoring<span class="sep">›</span>Replication Monitor</nav>
+<header class="page-header">
+  <h1>Replication Monitor</h1>
+  <p class="lead">
+    The purpose-built GUI (<code>sqlmonitor.exe</code>, launched from SSMS → right-click Replication →
+    <em>Launch Replication Monitor</em>). It reads the distribution database's history tables and presents
+    per-publication health, latency, and agent sessions. Learn its layout before the incident, not during.
+  </p>
+</header>
+
+<h2>Layout tour</h2>
+<div class="diagram">
+  <svg viewBox="0 0 960 400" role="img" aria-label="Replication Monitor layout schematic">
+    <rect x="30" y="30" width="900" height="340" rx="10" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.5"/>
+    <!-- left tree -->
+    <rect x="45" y="45" width="230" height="310" rx="8" fill="var(--surface)" stroke="var(--border)" stroke-width="1.2"/>
+    <text class="svg-label-sm" x="60" y="70">⊟ Replication Monitor</text>
+    <text class="svg-label-sm" x="75" y="95">⊟ My Publishers</text>
+    <text class="svg-label-sm" x="92" y="120">⊟ PUB01</text>
+    <rect x="100" y="130" width="160" height="22" rx="4" fill="var(--accent-soft)"/>
+    <text class="svg-label-sm" x="108" y="146" fill="var(--accent)">[SalesDB]: SalesPub</text>
+    <text class="svg-label-xs" x="108" y="175">add publishers via</text>
+    <text class="svg-label-xs" x="108" y="190">right-click → Add Publisher</text>
+    <!-- right tabs -->
+    <rect x="295" y="45" width="620" height="310" rx="8" fill="var(--surface)" stroke="var(--border)" stroke-width="1.2"/>
+    <rect x="310" y="58" width="150" height="26" rx="5" fill="var(--accent)"/><text x="385" y="76" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">All Subscriptions</text>
+    <rect x="465" y="58" width="130" height="26" rx="5" fill="var(--surface-2)" stroke="var(--border)"/><text class="svg-label-sm" x="530" y="76" text-anchor="middle">Tracer Tokens</text>
+    <rect x="600" y="58" width="100" height="26" rx="5" fill="var(--surface-2)" stroke="var(--border)"/><text class="svg-label-sm" x="650" y="76" text-anchor="middle">Agents</text>
+    <rect x="705" y="58" width="100" height="26" rx="5" fill="var(--surface-2)" stroke="var(--border)"/><text class="svg-label-sm" x="755" y="76" text-anchor="middle">Warnings</text>
+    <!-- grid rows -->
+    <text class="svg-label-xs" x="320" y="108">Status             Subscription                         Performance      Latency</text>
+    <rect x="312" y="118" width="590" height="24" rx="4" fill="var(--ok-bg)"/>
+    <text class="svg-label-xs" x="320" y="134">✅ Running       [SalesReporting] SUB01              Excellent          00:00:04</text>
+    <rect x="312" y="148" width="590" height="24" rx="4" fill="var(--warn-bg)"/>
+    <text class="svg-label-xs" x="320" y="164">⚠ Performance critical   [Analytics] SUB02        Critical           01:12:55</text>
+    <rect x="312" y="178" width="590" height="24" rx="4" fill="var(--danger-bg)"/>
+    <text class="svg-label-xs" x="320" y="194">❌ Error          [Archive] SUB03                      —                  Retrying…</text>
+    <text class="svg-label-xs" x="320" y="235">Double-click a row → session details: per-session messages,</text>
+    <text class="svg-label-xs" x="320" y="251">delivered #cmds, delivery rate, and the actual error text.</text>
+    <text class="svg-label-xs" x="320" y="290">Publication node tabs add: Undistributed Commands —</text>
+    <text class="svg-label-xs" x="320" y="306">the queue depth + estimated time to apply. Your latency triage tab.</text>
+    <g class="risk-marker" data-risk="monitor-blindness" transform="translate(895,50)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar"><span>Schematic of the Replication Monitor window — tree of publishers/publications on the left, tabbed detail on the right.</span></div>
+</div>
+
+<h2>The tabs that answer support questions</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Question</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>"Is anything broken right now?"</td><td>Root node → <em>All Subscriptions</em>: red ❌ = erroring, amber ⚠ = threshold exceeded</td></tr>
+    <tr><td>"How far behind are we?"</td><td>Publication → <em>All Subscriptions</em> → Latency column; precise numbers via <em>Tracer Tokens</em> tab</td></tr>
+    <tr><td>"How much is queued?"</td><td>Subscription detail → <em>Undistributed Commands</em>: count + estimated apply time</td></tr>
+    <tr><td>"What exactly failed?"</td><td>Double-click subscription → <em>Distributor To Subscriber History</em> → error detail in the session message (often truncated in job history, full here)</td></tr>
+    <tr><td>"Is the Log Reader alive?"</td><td>Publication → <em>Agents</em> tab → Log Reader Agent status + last action</td></tr>
+    <tr><td>"When did the snapshot last run?"</td><td><em>Agents</em> tab → Snapshot Agent history</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Warnings &amp; thresholds</h2>
+<p>
+  Per subscription, the <em>Warnings</em> tab lets you enable thresholds that turn the status amber and can raise alerts
+  (they map to the canned alerts configured on the <a href="alerts.html">Alerts page</a>):
+</p>
+<ul>
+  <li><strong>Latency exceeds</strong> — default 30 s (transactional). Tune per business SLA, not per wishful thinking.</li>
+  <li><strong>Subscription expiration</strong> — warn at % of retention. Set to warn <em>days</em> before the 336 h cliff.</li>
+  <li><strong>Merge sync duration / rows per second</strong> — merge-specific slowness detectors.</li>
+</ul>
+
+<div class="callout warn">
+  <div class="co-title">⚠ Replication Monitor is a viewer, not a monitor</div>
+  <p>It polls only while someone has it open — it will never page you (risk <em>Monitoring gap</em>). Production
+  monitoring needs the <a href="alerts.html">alert jobs</a> and <a href="dmvs-and-tables.html">queries</a> wired to your
+  alerting platform; Replication Monitor is the triage UI you open after the page.</p>
+</div>
+
+<h2>Monitoring without the GUI</h2>
+<p>Everything the Monitor shows comes from distributor procs you can script (full list on <a href="../commands/distributor-commands.html">Distributor commands</a>):</p>
+<pre data-label="T-SQL — the Monitor's data, scripted"><code class="sql">USE distribution;
+
+-- one row per publication with worst latency/status rollup
+EXEC sp_replmonitorhelppublication @publisher = N'PUB01';
+
+-- one row per subscription: status, latency, last sync
+EXEC sp_replmonitorhelpsubscription @publisher = N'PUB01', @publication_type = 0;
+
+-- queue depth for one subscription (the Undistributed Commands tab)
+EXEC sp_replmonitorsubscriptionpendingcmds
+     @publisher = N'PUB01', @publisher_db = N'SalesDB', @publication = N'SalesPub',
+     @subscriber = N'SUB01', @subscriber_db = N'SalesReporting', @subscription_type = 0;
+</code></pre>
+<p><code>status</code> values in the monitor procs: 1 Started · 2 Succeeded · 3 In progress · 4 Idle · 5 Retrying · 6 <strong>Failed</strong>. Alert on 5 and 6; investigate 4 when latency grows (idle + growing queue = agent not picking up work).</p>
+
+<h2>Permissions</h2>
+<p>Replication Monitor does not require sysadmin: add support engineers to the <code>replmonitor</code> database role in the <code>distribution</code> database for read-only monitoring access — the supportable pattern for ops teams.</p>
+
+</main>
+</div>
+</body>
+</html>

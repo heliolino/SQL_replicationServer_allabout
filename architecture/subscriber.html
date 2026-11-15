@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subscriber — Mechanics</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="architecture/subscriber">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="overview.html">Architecture</a><span class="sep">›</span>Subscriber</nav>
+<header class="page-header">
+  <h1><span class="badge sub">Subscriber</span> — where the data lands</h1>
+  <p class="lead">
+    The Subscriber receives the publication into a subscription database. The big design fork is
+    <strong>push vs. pull</strong> — it decides where the Distribution/Merge Agent runs, where its logs are,
+    and where you look when delivery stops.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="10" viewBox="0 0 960 440" role="img" aria-label="Push versus pull subscriptions">
+    <defs>
+      <marker id="sarw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/>
+      </marker>
+    </defs>
+
+    <!-- PUSH half -->
+    <rect class="svg-zone" x="20" y="50" width="920" height="170" rx="14"/>
+    <text class="svg-zone-label" x="35" y="73">Push subscription — agent runs at the distributor</text>
+
+    <path d="M60,120 a50,12 0 1,0 100,0 a50,12 0 1,0 -100,0 M60,120 v40 a50,12 0 0,0 100,0 v-40" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="110" y="145" text-anchor="middle">distribution</text>
+
+    <rect x="300" y="110" width="170" height="54" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="385" y="132" text-anchor="middle">Distribution Agent</text>
+    <text class="svg-label-xs" x="385" y="148" text-anchor="middle">process lives on DISTRIBUTOR</text>
+
+    <path d="M620,120 a60,13 0 1,0 120,0 a60,13 0 1,0 -120,0 M620,120 v42 a60,13 0 0,0 120,0 v-42" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="680" y="146" text-anchor="middle">Subscription DB</text>
+
+    <path class="svg-edge" d="M160,135 H297" marker-end="url(#sarw)"/>
+    <path class="svg-edge" d="M470,135 H617" marker-end="url(#sarw)"/>
+    <text class="svg-label-xs" x="543" y="125" text-anchor="middle">agent pushes over the network</text>
+    <path d="M160,135 H300" fill="none" stroke="none" data-flow data-start="0" data-travel="1.2" data-dots="3" data-gap="0.4" data-color="var(--dist)"/>
+    <path d="M470,135 H620" fill="none" stroke="none" data-flow data-start="1.4" data-travel="1.2" data-dots="3" data-gap="0.4" data-color="var(--dist)"/>
+
+    <text class="svg-label-xs" x="800" y="95">✔ central admin &amp; monitoring</text>
+    <text class="svg-label-xs" x="800" y="112">✔ default for always-connected servers</text>
+    <text class="svg-label-xs" x="800" y="129">✘ distributor CPU scales with subscribers</text>
+
+    <!-- PULL half -->
+    <rect class="svg-zone" x="20" y="245" width="920" height="170" rx="14"/>
+    <text class="svg-zone-label" x="35" y="268">Pull subscription — agent runs at the subscriber</text>
+
+    <path d="M60,315 a50,12 0 1,0 100,0 a50,12 0 1,0 -100,0 M60,315 v40 a50,12 0 0,0 100,0 v-40" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="110" y="340" text-anchor="middle">distribution</text>
+
+    <rect x="560" y="305" width="170" height="54" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="645" y="327" text-anchor="middle">Distribution Agent</text>
+    <text class="svg-label-xs" x="645" y="343" text-anchor="middle">process lives on SUBSCRIBER</text>
+
+    <path d="M780,315 a55,13 0 1,0 110,0 a55,13 0 1,0 -110,0 M780,315 v42 a55,13 0 0,0 110,0 v-42" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="835" y="341" text-anchor="middle">Subscription DB</text>
+
+    <path class="svg-edge" d="M557,330 H160" marker-end="url(#sarw)" marker-start="url(#sarw)"/>
+    <text class="svg-label-xs" x="358" y="320" text-anchor="middle">agent connects back and pulls</text>
+    <path class="svg-edge" d="M730,330 H777" marker-end="url(#sarw)"/>
+    <path d="M160,330 H560" fill="none" stroke="none" data-flow data-start="5" data-travel="1.6" data-dots="3" data-gap="0.4" data-color="var(--dist)"/>
+    <path d="M730,330 H780" fill="none" stroke="none" data-flow data-start="6.8" data-travel="0.6" data-dots="3" data-gap="0.4" data-color="var(--dist)"/>
+
+    <text class="svg-label-xs" x="300" y="380">✔ scales to many subscribers · ✔ subscriber controls schedule (occasionally connected)</text>
+    <text class="svg-label-xs" x="300" y="397">✘ decentralized troubleshooting: agent job + history live on each subscriber</text>
+
+    <g class="risk-marker" data-risk="query-timeout"       transform="translate(470,108)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="row-not-found"       transform="translate(740,98)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="subscriber-blocking" transform="translate(620,98)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-share-perms" transform="translate(560,303)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="retention-expired"   transform="translate(160,293)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--dist)"></span>command delivery</span>
+    <span>Pull + local snapshot path = the classic "access denied" trap (⚠ on the pull agent)</span>
+  </div>
+</div>
+
+<h2>Push vs. pull — decision table</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th></th><th>Push</th><th>Pull</th></tr></thead>
+  <tbody>
+    <tr><td>Agent process runs at</td><td>Distributor</td><td>Subscriber</td></tr>
+    <tr><td>Agent job stored in</td><td>Distributor msdb</td><td>Subscriber msdb</td></tr>
+    <tr><td>Snapshot folder access needed from</td><td>Distributor (local path can work)</td><td>Subscriber (<strong>must</strong> be a reachable UNC share)</td></tr>
+    <tr><td>Best for</td><td>Few, always-connected subscribers; central ops</td><td>Many subscribers; laptops/branches that sync on their own schedule</td></tr>
+    <tr><td>Where you troubleshoot</td><td>One place</td><td>Every subscriber</td></tr>
+    <tr><td>Monitoring visibility</td><td>Full in Replication Monitor</td><td>Reduced — pull agent history is at each subscriber</td></tr>
+  </tbody>
+</table></div>
+
+<h2>What initialization puts into the subscription database</h2>
+<ul>
+  <li>The article tables themselves (schema per <code>@schema_option</code>, data via BCP).</li>
+  <li>Auto-generated apply procedures per article: <code>sp_MSins_dboOrders</code>, <code>sp_MSupd_dboOrders</code>, <code>sp_MSdel_dboOrders</code> — the Distribution Agent calls these instead of raw DML.</li>
+  <li><code>MSreplication_subscriptions</code> — the subscription's bookmark (last applied <code>transaction_timestamp</code>).</li>
+  <li>For merge: <code>MSmerge_contents</code>, <code>MSmerge_tombstone</code>, <code>MSmerge_genhistory</code>, triggers on every article, and a <code>rowguid</code> column.</li>
+</ul>
+<pre data-label="T-SQL — subscriber-side checks"><code class="sql">-- what subscriptions exist here (transactional pull/push)?
+USE SalesReporting;
+SELECT publisher, publisher_db, publication, distribution_agent,
+       transaction_timestamp              -- last applied LSN watermark
+FROM dbo.MSreplication_subscriptions;
+
+-- is the agent currently connected and applying?
+SELECT s.session_id, s.login_name, s.program_name, r.status, r.wait_type, r.blocking_session_id
+FROM sys.dm_exec_sessions s
+LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
+WHERE s.program_name LIKE '%distrib%' OR s.program_name LIKE '%replmerg%';
+</code></pre>
+
+<h2>Rules of the road for subscriber data</h2>
+<div class="callout danger">
+  <div class="co-title">🛑 In one-way topologies, the subscriber is read-only by contract — not by enforcement</div>
+  <p>Nothing technically prevents writes to subscriber tables in snapshot/transactional replication, but any local
+  UPDATE/DELETE on replicated rows sets up a future <strong>error 20598 (row not found)</strong> or <strong>2627
+  (PK violation)</strong> when the publisher's version of events arrives. If local writes are required, the design
+  should have been merge, P2P, or separate local tables. As support: find the writer (DML trigger or Extended Events
+  audit), don't just skip the error.</p>
+</div>
+<ul>
+  <li>You <em>may</em> add extra indexes, extra tables, and even extra columns (with defaults) at the subscriber — common for reporting. Document them: they disappear on reinitialization if the article drops/recreates the table (<code>@pre_creation_cmd = 'drop'</code>).</li>
+  <li>Subscriber triggers must be <code>NOT FOR REPLICATION</code> or convergence breaks.</li>
+  <li>Consider enabling <code>READ_COMMITTED_SNAPSHOT</code> so reporting readers don't block the Distribution Agent's writes.</li>
+</ul>
+
+<h2>Writable-subscriber options compared</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Option</th><th>Mechanism</th><th>Conflict story</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><a href="../types/merge.html">Merge replication</a></td><td>Triggers + rowguid track changes; Merge Agent reconciles</td><td>Resolvers, priority-based; conflicts logged</td><td>Supported</td></tr>
+    <tr><td><a href="../types/peer-to-peer.html">Peer-to-peer</a></td><td>Transactional both ways between equal nodes</td><td>Detection only — conflict stops agents (22815)</td><td>Supported, Enterprise</td></tr>
+    <tr><td>Updatable subscriptions (immediate/queued)</td><td>Triggers + 2PC or queue back to publisher</td><td>Publisher wins / reinit on conflict</td><td><span class="badge danger">Deprecated</span> — migrate off</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Commands that act on the Subscriber</h2>
+<p>Full list on <a href="../commands/subscriber-commands.html">Subscriber commands</a>. Core set:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>Runs at</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_addsubscription</code></td><td>Publisher</td><td>Register the subscription (push or pull)</td></tr>
+    <tr><td><code>sp_addpullsubscription</code> + <code>sp_addpullsubscription_agent</code></td><td>Subscriber</td><td>Create the pull side + its agent job</td></tr>
+    <tr><td><code>sp_reinitsubscription</code></td><td>Publisher</td><td>Mark subscription for a fresh snapshot</td></tr>
+    <tr><td><code>sp_dropsubscription</code> / <code>sp_droppullsubscription</code></td><td>Publisher / Subscriber</td><td>Remove the subscription (both sides must be cleaned)</td></tr>
+    <tr><td><code>sp_subscription_cleanup</code></td><td>Subscriber</td><td>Remove orphaned subscription metadata after a broken drop</td></tr>
+    <tr><td><code>sp_removedbreplication</code></td><td>Subscriber</td><td><span class="badge danger">DANGER</span> strip all replication metadata from the subscription DB</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

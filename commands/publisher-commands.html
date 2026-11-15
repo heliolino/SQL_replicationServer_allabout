@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publisher Commands</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="commands/publisher-commands">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="index.html">Commands</a><span class="sep">›</span>Publisher</nav>
+<header class="page-header">
+  <h1><span class="badge pub">Publisher</span> commands</h1>
+  <p class="lead">Commands that create, alter, inspect, or destroy publisher-side objects — publications, articles, filters — and the log-pipeline internals that live in the publication database.</p>
+</header>
+
+<h2>Lifecycle</h2>
+
+<h3><code>sp_replicationdboption</code> — the master switch</h3>
+<pre data-label="T-SQL"><code class="sql">EXEC sp_replicationdboption
+     @dbname  = N'SalesDB',
+     @optname = N'publish',        -- or 'merge publish', 'subscribe', 'sync with backup'
+     @value   = N'true';
+</code></pre>
+<ul>
+  <li>Enabling <code>publish</code> starts log-record marking immediately; disabling it requires all publications in the DB to be dropped first.</li>
+  <li><code>sync with backup</code> on publication + distribution DBs = restore-consistent replication (latency cost).</li>
+</ul>
+
+<h3><code>sp_addpublication</code> — parameters that matter later</h3>
+<pre data-label="T-SQL"><code class="sql">EXEC sp_addpublication
+     @publication      = N'SalesPub',
+     @repl_freq        = N'continuous',   -- 'continuous' = transactional; 'snapshot' = snapshot type
+     @sync_method      = N'concurrent',   -- concurrent = minimal-lock snapshot (transactional)
+     @retention        = 336,             -- hours until an unsynced subscription expires
+     @immediate_sync   = N'false',        -- true = keep snapshot+cmds for full retention (DB bloat!)
+     @allow_anonymous  = N'false',        -- forces immediate_sync when true
+     @independent_agent= N'true',         -- own distribution agent per subscription
+     @replicate_ddl    = 1,               -- ALTERs flow to subscribers
+     @enabled_for_p2p  = N'false',
+     @status           = N'active';
+</code></pre>
+
+<h3><code>sp_addarticle</code> — per-table control</h3>
+<pre data-label="T-SQL"><code class="sql">EXEC sp_addarticle
+     @publication      = N'SalesPub',
+     @article          = N'Orders',
+     @source_owner     = N'dbo',
+     @source_object    = N'Orders',
+     @destination_table= N'Orders',           -- may differ!
+     @destination_owner= N'rpt',              -- may differ!
+     @type             = N'logbased',         -- or 'proc exec' / 'serializable proc exec'
+     @pre_creation_cmd = N'drop',             -- drop | delete | truncate | none
+     @schema_option    = 0x000000000803509F,  -- bitmask: what schema ships
+     @identityrangemanagementoption = N'manual',  -- or 'auto' (merge-style ranges)
+     @ins_cmd = N'CALL sp_MSins_dboOrders',
+     @upd_cmd = N'SCALL sp_MSupd_dboOrders',  -- SCALL = only changed columns
+     @del_cmd = N'CALL sp_MSdel_dboOrders';
+</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ @schema_option bits support engineers actually meet</div>
+  <ul>
+    <li><code>0x01</code> generate object creation script · <code>0x10</code> clustered index · <code>0x40</code> nonclustered indexes</li>
+    <li><code>0x08</code> replicate timestamp columns as-is · <code>0x20</code> convert UDTs to base types</li>
+    <li><code>0x100</code> user triggers · <code>0x200</code> FKs · <code>0x1000</code> column collation</li>
+    <li>Changing schema_option on a live article ⇒ requires a new snapshot for the article.</li>
+  </ul>
+</div>
+
+<h3>Filters</h3>
+<pre data-label="T-SQL"><code class="sql">-- row filter (static, transactional)
+EXEC sp_articlefilter @publication = N'SalesPub', @article = N'Orders',
+     @filter_name = N'FLT_Orders', @filter_clause = N'Region = N''EU''';
+EXEC sp_articleview  @publication = N'SalesPub', @article = N'Orders',
+     @view_name = N'VW_Orders',  @filter_clause = N'Region = N''EU''';
+
+-- column filter: start from none, add back
+EXEC sp_articlecolumn @publication = N'SalesPub', @article = N'Orders';            -- all columns
+EXEC sp_articlecolumn @publication = N'SalesPub', @article = N'Orders',
+     @column = N'CardNumber', @operation = N'drop', @force_invalidate_snapshot = 1; -- remove one
+</code></pre>
+
+<h3>Changing and dropping</h3>
+<pre data-label="T-SQL"><code class="sql">-- most property changes invalidate the snapshot; the procs make you say so:
+EXEC sp_changepublication @publication = N'SalesPub',
+     @property = N'retention', @value = N'504',          -- hours
+     @force_invalidate_snapshot = 0, @force_reinit_subscription = 0;
+
+EXEC sp_droparticle     @publication = N'SalesPub', @article = N'Orders',
+     @force_invalidate_snapshot = 1;
+EXEC sp_droppublication @publication = N'SalesPub';
+</code></pre>
+<p>The two <code>@force_*</code> flags are honesty checks: if the proc refuses without them, the change will cost a snapshot or a reinit — know that before you force.</p>
+
+<h2>Log-pipeline internals (read before touching)</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>Safe?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_repltrans</code></td><td>✅ read-only</td><td>Waiting (un-harvested) transactions, LSN pairs</td></tr>
+    <tr><td><code>sp_replcounters</code></td><td>✅ read-only</td><td>Rate + latency per published DB — first triage query</td></tr>
+    <tr><td><code>DBCC OPENTRAN</code></td><td>✅ read-only</td><td>Oldest active and oldest replicated txn — what pins the log</td></tr>
+    <tr><td><code>sp_replcmds</code></td><td>⚠ careful</td><td>The Log Reader's own call. One session per DB: if you run it interactively, the real Log Reader errors with 18752 until you disconnect and run <code>sp_replflush</code></td></tr>
+    <tr><td><code>sp_replflush</code></td><td>⚠ careful</td><td>Clears the article cache / releases the sp_replcmds reservation</td></tr>
+    <tr><td><code>sp_repldone</code></td><td><span class="badge danger">☠</span></td><td>Moves the "harvested up to" watermark. The infamous reset variant marks everything replicated → log truncates → <strong>subscribers never get those transactions</strong>. Reinit is then mandatory. Documented sequence in <a href="../troubleshooting/common-errors.html">common errors</a></td></tr>
+  </tbody>
+</table></div>
+
+<h2>Access control</h2>
+<pre data-label="T-SQL"><code class="sql">EXEC sp_help_publication_access  @publication = N'SalesPub';
+EXEC sp_grant_publication_access @publication = N'SalesPub', @login = N'DOMAIN\replPull';
+EXEC sp_revoke_publication_access @publication = N'SalesPub', @login = N'DOMAIN\olduser';
+</code></pre>
+
+<h2>Teardown of last resort</h2>
+<pre data-label="T-SQL"><code class="sql">-- strips every trace of replication metadata from the DB, no questions asked.
+-- Use when normal drops fail with orphaned-metadata errors. Local effect only:
+-- distributor/subscriber sides must be cleaned separately.
+EXEC sp_removedbreplication @dbname = N'SalesDB';
+</code></pre>
+
+</main>
+</div>
+</body>
+</html>

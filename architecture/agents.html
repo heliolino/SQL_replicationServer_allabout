@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replication Agents — Deep Dive</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="architecture/agents">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="overview.html">Architecture</a><span class="sep">›</span>Agents</nav>
+<header class="page-header">
+  <h1><span class="badge agent">Agents</span> — the five workers of replication</h1>
+  <p class="lead">
+    Agents are the only moving parts: stand-alone executables run as SQL Server Agent job steps.
+    When "replication is broken", in practice <strong>an agent is stopped, failing, or slow</strong>.
+    Learn each agent's job, where it runs, and its failure modes.
+  </p>
+</header>
+
+<div class="callout ok">
+  <div class="co-title">✅ Support reflex: find the agent first</div>
+  <p>Every replication incident maps to an agent. Jobs live in msdb under categories <code>REPL-Snapshot</code>,
+  <code>REPL-LogReader</code>, <code>REPL-Distribution</code>, <code>REPL-Merge</code>, <code>REPL-QueueReader</code>.
+  Agent naming convention: <code>&lt;Publisher&gt;-&lt;PubDB&gt;-&lt;Publication&gt;-&lt;Subscriber&gt;-&lt;n&gt;</code>.</p>
+</div>
+
+<h2 id="snapshot">1 · Snapshot Agent (<code>snapshot.exe</code>)</h2>
+<div class="diagram">
+  <svg data-animate data-cycle="7" viewBox="0 0 920 150" role="img" aria-label="Snapshot agent flow">
+    <defs><marker id="aarw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+    <path d="M40,65 a45,12 0 1,0 90,0 a45,12 0 1,0 -90,0 M40,65 v35 a45,12 0 0,0 90,0 v-35" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="85" y="88" text-anchor="middle">Publication DB</text>
+    <rect x="330" y="45" width="190" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="425" y="70" text-anchor="middle">Snapshot Agent</text>
+    <text class="svg-label-xs" x="425" y="88" text-anchor="middle">BCP out schema + data</text>
+    <path d="M700,47 h40 l10,10 h90 v48 h-140 z" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="770" y="78" text-anchor="middle">Snapshot folder</text>
+    <text class="svg-label-xs" x="770" y="94" text-anchor="middle">.sch .bcp .idx .pre</text>
+    <path class="svg-edge" d="M130,75 H327" marker-end="url(#aarw)"/>
+    <text class="svg-label-xs" x="228" y="65" text-anchor="middle">reads articles (shared locks)</text>
+    <path class="svg-edge" d="M520,75 H697" marker-end="url(#aarw)"/>
+    <path d="M130,75 H330" fill="none" stroke="none" data-flow data-start="0" data-travel="1.4" data-dots="3" data-gap="0.4" data-color="var(--pub)"/>
+    <path d="M520,75 H700" fill="none" stroke="none" data-flow data-start="1.6" data-travel="1.4" data-dots="3" data-gap="0.4" data-color="var(--agent)" data-shape="cmd"/>
+    <g class="risk-marker" data-risk="init-snapshot-locks"  transform="translate(130,48)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-disk-space"  transform="translate(700,44)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-share-perms" transform="translate(840,44)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+</div>
+<ul>
+  <li><strong>Used by all types</strong>, but only for (re)initialization. Not continuous: runs when you start it or on schedule.</li>
+  <li>Writes article schema (<code>.sch</code>), data (<code>.bcp</code>), indexes/constraints (<code>.idx</code>, <code>.dri</code>) and pre-scripts (<code>.pre</code>) to the snapshot folder.</li>
+  <li>Transactional publications default to a <strong>concurrent snapshot</strong> (short schema locks only); snapshot publications take shared locks for the duration.</li>
+  <li>Start it with <code>sp_startpublication_snapshot</code> or by starting the <code>REPL-Snapshot</code> job.</li>
+</ul>
+
+<h2 id="logreader">2 · Log Reader Agent (<code>logread.exe</code>)</h2>
+<div class="diagram">
+  <svg data-animate data-cycle="7" viewBox="0 0 920 150" role="img" aria-label="Log reader agent flow">
+    <rect x="40" y="45" width="140" height="60" rx="8" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="110" y="70" text-anchor="middle">Transaction log</text>
+    <text class="svg-label-xs" x="110" y="88" text-anchor="middle">committed, marked txns</text>
+    <rect x="330" y="45" width="190" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="425" y="70" text-anchor="middle">Log Reader Agent</text>
+    <text class="svg-label-xs" x="425" y="88" text-anchor="middle">sp_replcmds → sp_repldone</text>
+    <path d="M700,60 a55,12 0 1,0 110,0 a55,12 0 1,0 -110,0 M700,60 v38 a55,12 0 0,0 110,0 v-38" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="755" y="86" text-anchor="middle">distribution DB</text>
+    <path class="svg-edge" d="M180,75 H327" marker-end="url(#aarw)"/>
+    <path class="svg-edge" d="M520,75 H697" marker-end="url(#aarw)"/>
+    <text class="svg-label-xs" x="608" y="65" text-anchor="middle">commands, in commit order</text>
+    <path d="M180,75 H330" fill="none" stroke="none" data-flow data-start="0" data-travel="1.2" data-dots="4" data-gap="0.35" data-color="var(--pub)"/>
+    <path d="M520,75 H700" fill="none" stroke="none" data-flow data-start="1.4" data-travel="1.2" data-dots="4" data-gap="0.35" data-color="var(--pub)" data-shape="cmd"/>
+    <g class="risk-marker" data-risk="log-reader-latency" transform="translate(180,48)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="agent-job-stopped"  transform="translate(330,48)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="large-transactions" transform="translate(40,48)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+</div>
+<ul>
+  <li><strong>One per published database</strong> (shared by all its transactional publications). Runs continuously at the distributor.</li>
+  <li>Reads <em>only committed</em> transactions, translates them into commands, writes batches to <code>MSrepl_commands</code>/<code>MSrepl_transactions</code>, then advances the truncation watermark with <code>sp_repldone</code>.</li>
+  <li>Key tuning parameters: <code>-ReadBatchSize</code>, <code>-PollingInterval</code>, <code>-MaxCmdsInTran</code> (split giant transactions).</li>
+  <li>If it stops: latency grows <em>and the publisher's log grows</em> — a double incident. See ⚠ markers.</li>
+</ul>
+
+<h2 id="distribution">3 · Distribution Agent (<code>distrib.exe</code>)</h2>
+<div class="diagram">
+  <svg data-animate data-cycle="7" viewBox="0 0 920 150" role="img" aria-label="Distribution agent flow">
+    <path d="M40,60 a55,12 0 1,0 110,0 a55,12 0 1,0 -110,0 M40,60 v38 a55,12 0 0,0 110,0 v-38" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="95" y="86" text-anchor="middle">distribution DB</text>
+    <rect x="330" y="45" width="190" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="425" y="70" text-anchor="middle">Distribution Agent</text>
+    <text class="svg-label-xs" x="425" y="88" text-anchor="middle">one per subscription*</text>
+    <path d="M700,60 a55,12 0 1,0 110,0 a55,12 0 1,0 -110,0 M700,60 v38 a55,12 0 0,0 110,0 v-38" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="755" y="86" text-anchor="middle">Subscription DB</text>
+    <path class="svg-edge" d="M150,75 H327" marker-end="url(#aarw)"/>
+    <text class="svg-label-xs" x="238" y="65" text-anchor="middle">pending commands</text>
+    <path class="svg-edge" d="M520,75 H697" marker-end="url(#aarw)"/>
+    <text class="svg-label-xs" x="608" y="65" text-anchor="middle">EXEC sp_MSins_/_upd_/_del_</text>
+    <path d="M150,75 H330" fill="none" stroke="none" data-flow data-start="0" data-travel="1.2" data-dots="4" data-gap="0.35" data-color="var(--dist)" data-shape="cmd"/>
+    <path d="M520,75 H700" fill="none" stroke="none" data-flow data-start="1.4" data-travel="1.2" data-dots="4" data-gap="0.35" data-color="var(--dist)"/>
+    <g class="risk-marker" data-risk="query-timeout"      transform="translate(520,48)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="row-not-found"      transform="translate(810,48)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="agent-login-failure" transform="translate(330,48)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+</div>
+<ul>
+  <li>Applies the initial snapshot, then pending commands, to each subscriber <strong>in commit order</strong>. Used by snapshot and transactional replication.</li>
+  <li>*By default one agent per subscription; <code>@independent_agent = 'false'</code> publications share one agent per publisher-DB/subscriber-DB pair.</li>
+  <li>Push: runs at the distributor. Pull: runs at the subscriber. Continuous (<code>-Continuous</code>) or scheduled.</li>
+  <li>Key tuning: <code>-CommitBatchSize</code>, <code>-CommitBatchThreshold</code>, <code>-QueryTimeout</code>, <code>-SubscriptionStreams</code> (parallel apply), <code>-SkipErrors</code> (dangerous — see <a href="../troubleshooting/common-errors.html">common errors</a>).</li>
+</ul>
+
+<h2 id="merge">4 · Merge Agent (<code>replmerg.exe</code>)</h2>
+<div class="diagram">
+  <svg data-animate data-cycle="9" viewBox="0 0 920 170" role="img" aria-label="Merge agent flow — bidirectional">
+    <path d="M40,70 a55,12 0 1,0 110,0 a55,12 0 1,0 -110,0 M40,70 v38 a55,12 0 0,0 110,0 v-38" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="95" y="96" text-anchor="middle">Publisher</text>
+    <text class="svg-label-xs" x="95" y="135" text-anchor="middle">MSmerge_contents</text>
+    <rect x="330" y="55" width="190" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="425" y="80" text-anchor="middle">Merge Agent</text>
+    <text class="svg-label-xs" x="425" y="98" text-anchor="middle">upload ⇄ download + resolve</text>
+    <path d="M700,70 a55,12 0 1,0 110,0 a55,12 0 1,0 -110,0 M700,70 v38 a55,12 0 0,0 110,0 v-38" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="755" y="96" text-anchor="middle">Subscriber</text>
+    <text class="svg-label-xs" x="755" y="135" text-anchor="middle">MSmerge_contents</text>
+    <path class="svg-edge" d="M150,78 H327" marker-end="url(#aarw)" marker-start="url(#aarw)"/>
+    <path class="svg-edge" d="M520,78 H697" marker-end="url(#aarw)" marker-start="url(#aarw)"/>
+    <path d="M700,88 H520" fill="none" stroke="none" data-flow data-start="0"   data-travel="1.2" data-dots="3" data-gap="0.4" data-color="var(--sub)"/>
+    <path d="M520,88 H330" fill="none" stroke="none" data-flow data-start="1.3" data-travel="1.0" data-dots="3" data-gap="0.4" data-color="var(--sub)"/>
+    <path d="M330,68 H520" fill="none" stroke="none" data-flow data-start="4.5" data-travel="1.0" data-dots="3" data-gap="0.4" data-color="var(--pub)"/>
+    <path d="M520,68 H700" fill="none" stroke="none" data-flow data-start="5.6" data-travel="1.2" data-dots="3" data-gap="0.4" data-color="var(--pub)"/>
+    <g class="risk-marker" data-risk="merge-conflicts"   transform="translate(425,53)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="identity-ranges"   transform="translate(810,58)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="nonconverged-data" transform="translate(150,58)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--sub)"></span>upload: subscriber changes</span>
+    <span><span class="legend-dot" style="background:var(--pub)"></span>download: publisher changes</span>
+  </div>
+</div>
+<ul>
+  <li>Per sync session: <strong>upload</strong> subscriber changes, <strong>download</strong> publisher changes, detect conflicts by comparing <code>generation</code>/lineage metadata, apply the resolver's winner on both sides.</li>
+  <li>Changes are tracked by triggers into <code>MSmerge_contents</code> (data) and <code>MSmerge_tombstone</code> (deletes) — no log reading, no distributor queue (distribution DB stores only history for merge).</li>
+  <li>Key tuning: <code>-ExchangeType</code> (upload/download only), <code>-UploadGenerationsPerBatch</code>, <code>-Validate</code>, web synchronization over HTTPS for internet clients.</li>
+</ul>
+
+<h2 id="queuereader">5 · Queue Reader Agent (<code>qrdrsvc.exe</code>)</h2>
+<ul>
+  <li>Serves <strong>queued updating subscriptions</strong> only (<span class="badge danger">deprecated</span> feature): applies changes made at subscribers back to the publisher from a queue.</li>
+  <li>One per distribution database, runs at the distributor, continuous.</li>
+  <li>Support stance: if you meet one in the wild, the design predates 2012 — flag for migration to merge or P2P rather than invest in tuning it.</li>
+</ul>
+
+<h2>Agent profiles — the right way to change parameters</h2>
+<p>
+  Agent parameters can be set per job step (the <code>-Parameter</code> style on the command line) or via
+  <strong>agent profiles</strong> stored at the distributor (<code>MSagent_profiles</code>). Profiles are the
+  maintainable choice: they survive job recreation and apply to groups of agents.
+</p>
+<pre data-label="T-SQL — profiles"><code class="sql">-- list profiles and their parameters
+EXEC sp_help_agent_profile;
+EXEC sp_help_agent_parameter @profile_id = 4;   -- e.g. default Distribution profile
+
+-- create a custom profile with a bigger query timeout, then assign in
+-- Replication Monitor → Agent → Profile, or with sp_update_agent_profile
+EXEC sp_add_agent_profile @profile_name = N'LongTimeout',
+     @agent_type = 3,               -- 1 snapshot, 2 logreader, 3 distribution, 4 merge, 9 queuereader
+     @profile_type = 0;
+EXEC sp_add_agent_parameter @profile_id = @@IDENTITY /* see note */,
+     @parameter_name = N'-QueryTimeout', @parameter_value = N'3600';
+</code></pre>
+<p class="lead" style="font-size:.9rem">
+  Built-in alternates worth knowing: <em>Verbose history</em> (debugging), <em>Continue on data consistency errors</em>
+  (the profile equivalent of <code>-SkipErrors 2601:2627:20598</code> — same dangers), <em>Slow link</em> (merge over WAN).
+</p>
+
+<h2>Where to read an agent's story</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Source</th><th>What you get</th></tr></thead>
+  <tbody>
+    <tr><td>Replication Monitor → agent → sessions</td><td>Friendly per-session history, errors, latency</td></tr>
+    <tr><td><code>distribution.dbo.MS*_history</code> tables</td><td>The same data, queryable; survives Monitor's refresh quirks</td></tr>
+    <tr><td>msdb job history</td><td>Only start/stop/failure of the wrapper job step — not enough detail alone</td></tr>
+    <tr><td><code>-Output C:\temp\agent.log -OutputVerboseLevel 2</code></td><td>Full verbose trace — the support engineer's deep-debug tool; add to the job step temporarily</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

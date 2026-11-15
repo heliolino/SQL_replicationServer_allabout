@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring — Tracer Tokens</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="monitoring/tracer-tokens">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Monitoring<span class="sep">›</span>Tracer Tokens</nav>
+<header class="page-header">
+  <h1>Tracer Tokens — latency, measured honestly</h1>
+  <p class="lead">
+    A tracer token is a tiny marker transaction written into the publisher's log. It rides the real pipeline
+    like any other transaction, and the system records the timestamp at each hop — giving you <strong>exact</strong>
+    publisher→distributor and distributor→subscriber latency, per subscription. Transactional replication only.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="9" viewBox="0 0 960 260" role="img" aria-label="Tracer token journey with timestamps">
+    <defs><marker id="ttar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <rect x="40" y="80" width="170" height="70" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="125" y="110" text-anchor="middle">Publisher log</text>
+    <text class="svg-label-xs" x="125" y="128" text-anchor="middle">⏱ t₀ token committed</text>
+
+    <path d="M390,95 a55,13 0 1,0 110,0 a55,13 0 1,0 -110,0 M390,95 v40 a55,13 0 0,0 110,0 v-40" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.8"/>
+    <text class="svg-label-sm" x="445" y="122" text-anchor="middle">distribution</text>
+    <text class="svg-label-xs" x="445" y="170" text-anchor="middle">⏱ t₁ token arrives</text>
+
+    <rect x="720" y="80" width="190" height="70" rx="10" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.8"/>
+    <text class="svg-label" x="815" y="110" text-anchor="middle">Subscriber</text>
+    <text class="svg-label-xs" x="815" y="128" text-anchor="middle">⏱ t₂ token applied</text>
+
+    <path class="svg-edge" d="M210,115 H387" marker-end="url(#ttar)"/>
+    <text class="svg-label-sm" x="298" y="103" text-anchor="middle">t₁ − t₀</text>
+    <text class="svg-label-xs" x="298" y="137" text-anchor="middle">Log Reader leg</text>
+    <path class="svg-edge" d="M500,115 H717" marker-end="url(#ttar)"/>
+    <text class="svg-label-sm" x="608" y="103" text-anchor="middle">t₂ − t₁</text>
+    <text class="svg-label-xs" x="608" y="137" text-anchor="middle">Distribution Agent leg (per subscription)</text>
+
+    <path d="M210,115 H390" fill="none" stroke="none" data-flow data-start="0.5" data-travel="1.6" data-dots="1" data-color="var(--warn)" data-size="6"/>
+    <path d="M500,115 H720" fill="none" stroke="none" data-flow data-start="2.6" data-travel="2.0" data-dots="1" data-color="var(--warn)" data-size="6"/>
+
+    <text class="svg-label-xs" x="480" y="225" text-anchor="middle">total latency = (t₁ − t₀) + (t₂ − t₁) — and the split tells you WHICH leg is slow</text>
+  </svg>
+  <div class="diagram-bar"><span><span class="legend-dot" style="background:var(--warn)"></span>the tracer token riding the normal pipeline</span></div>
+</div>
+
+<h2>Why the split matters more than the total</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Pattern</th><th>Diagnosis</th></tr></thead>
+  <tbody>
+    <tr><td>t₁−t₀ large, t₂−t₁ small</td><td>Log Reader leg is behind: agent stopped/failing, giant transaction being chewed, publisher log issues → start at <a href="../architecture/publisher.html">Publisher</a></td></tr>
+    <tr><td>t₁−t₀ small, t₂−t₁ large</td><td>Delivery leg: Distribution Agent stopped, subscriber blocking/timeouts, network, one subscription only vs all → start at <a href="../architecture/subscriber.html">Subscriber</a></td></tr>
+    <tr><td>Both large</td><td>Distributor itself (IO pressure, cleanup blocking) or everything down → start at <a href="../architecture/distributor.html">Distributor</a></td></tr>
+    <tr><td>Token never arrives</td><td>Pipeline fully stopped for that subscription — check agent states before anything else</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Using tokens from T-SQL</h2>
+<pre data-label="T-SQL — post and read a tracer token"><code class="sql">-- 1. post a token (at the publisher, in the publication DB)
+USE SalesDB;
+DECLARE @token_id int;
+EXEC sp_posttracertoken
+     @publication = N'SalesPub',
+     @tracer_token_id = @token_id OUTPUT;
+SELECT @token_id AS token_id;
+
+-- 2. read results (wait a bit; at publisher or distributor)
+EXEC sp_helptracertokenhistory
+     @publication = N'SalesPub',
+     @tracer_id = @token_id;
+-- columns: distributor_latency (t1-t0), subscriber, subscriber_latency (t2-t1),
+--          overall_latency — NULL until the token reaches that hop
+
+-- list tokens posted in the last days
+EXEC sp_helptracertokens @publication = N'SalesPub';
+
+-- cleanup old token metadata (also removed by retention cleanup)
+EXEC sp_deletetracertokenhistory @publication = N'SalesPub', @cutoff_date = '2026-11-01';
+</code></pre>
+<p>In Replication Monitor: publication → <em>Tracer Tokens</em> tab → <em>Insert Tracer</em> — same data, clickable.</p>
+
+<h2>Continuous latency monitoring with tokens</h2>
+<p>A common pattern: a SQL Agent job posts a token every 5–15 minutes and a second step (after a delay) checks the result, raising an error if latency exceeds the SLA — giving you the alerting Replication Monitor can't do:</p>
+<pre data-label="T-SQL — latency check job step sketch"><code class="sql">DECLARE @token_id int, @latency int;
+EXEC sp_posttracertoken @publication = N'SalesPub', @tracer_token_id = @token_id OUTPUT;
+WAITFOR DELAY '00:02:00';   -- give it time to flow
+
+SELECT @latency = MAX(DATEDIFF(SECOND, 0, ISNULL(overall_latency, '01:00:00')))
+FROM (SELECT overall_latency = NULL) placeholder;  -- replace with sp_helptracertokenhistory INSERT…EXEC pattern
+
+-- real implementations: INSERT the proc output into a temp table, then:
+IF @latency IS NULL OR @latency > 300
+    RAISERROR('Replication latency for SalesPub exceeds 300s (or token lost)', 16, 1) WITH LOG;
+</code></pre>
+<div class="callout ok">
+  <div class="co-title">✅ Tokens are cheap</div>
+  <p>A token is a single tiny transaction — safe to post every few minutes even on busy systems. It measures the
+  <em>same path</em> user transactions take, which makes it the most honest latency metric available; counters like
+  <code>sp_replcounters</code> estimate, tokens measure.</p>
+</div>
+
+<h2>Limitations</h2>
+<ul>
+  <li>Transactional (and P2P) publications only — no merge, no snapshot.</li>
+  <li>A token measures the pipeline <em>from now</em>: posting one during an incident tells you about new work, while the backlog ahead of it still has to drain — pair tokens with the <strong>undistributed commands</strong> count for the full picture.</li>
+  <li>Requires agents actually running; a lost token is itself a finding.</li>
+</ul>
+
+</main>
+</div>
+</body>
+</html>

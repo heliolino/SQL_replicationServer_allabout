@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Publisher — Mechanics</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="architecture/publisher">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span><a href="overview.html">Architecture</a><span class="sep">›</span>Publisher</nav>
+<header class="page-header">
+  <h1><span class="badge pub">Publisher</span> — where the data is born</h1>
+  <p class="lead">
+    The Publisher owns the source database and defines <strong>what</strong> is replicated (publications and
+    articles) and <strong>how</strong> (filters, article options). For transactional replication its transaction
+    log doubles as the first queue of the pipeline.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="10" viewBox="0 0 960 430" role="img" aria-label="Publisher internals: publication, articles, filters, transaction log">
+    <defs>
+      <marker id="parw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/>
+      </marker>
+    </defs>
+
+    <rect class="svg-zone" x="20" y="55" width="560" height="350" rx="14"/>
+    <text class="svg-zone-label" x="35" y="78">Publication database</text>
+
+    <!-- full table -->
+    <rect x="45" y="100" width="150" height="110" rx="8" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-sm" x="120" y="120" text-anchor="middle">dbo.Orders (all rows)</text>
+    <g>
+      <rect x="58" y="130" width="124" height="12" rx="2" fill="var(--pub)" opacity=".75"/>
+      <rect x="58" y="146" width="124" height="12" rx="2" fill="var(--pub)" opacity=".35"/>
+      <rect x="58" y="162" width="124" height="12" rx="2" fill="var(--pub)" opacity=".75"/>
+      <rect x="58" y="178" width="124" height="12" rx="2" fill="var(--pub)" opacity=".35"/>
+    </g>
+
+    <!-- publication box -->
+    <rect x="300" y="85" width="250" height="230" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="425" y="110" text-anchor="middle">Publication “SalesPub”</text>
+
+    <rect x="320" y="125" width="210" height="52" rx="6" fill="var(--surface)" stroke="var(--pub)" stroke-width="1.2"/>
+    <text class="svg-label-sm" x="425" y="145" text-anchor="middle">Article: dbo.Orders</text>
+    <text class="svg-label-xs" x="425" y="161" text-anchor="middle">row filter: WHERE Region = 'EU'</text>
+
+    <rect x="320" y="187" width="210" height="52" rx="6" fill="var(--surface)" stroke="var(--pub)" stroke-width="1.2"/>
+    <text class="svg-label-sm" x="425" y="207" text-anchor="middle">Article: dbo.Customers</text>
+    <text class="svg-label-xs" x="425" y="223" text-anchor="middle">column filter: no Email column</text>
+
+    <rect x="320" y="249" width="210" height="46" rx="6" fill="var(--surface)" stroke="var(--pub)" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <text class="svg-label-sm" x="425" y="268" text-anchor="middle">Article: dbo.usp_GetOrder</text>
+    <text class="svg-label-xs" x="425" y="283" text-anchor="middle">proc schema (or execution)</text>
+
+    <path class="svg-edge" d="M195,155 H297" marker-end="url(#parw)"/>
+    <text class="svg-label-xs" x="246" y="145" text-anchor="middle">subset only</text>
+
+    <!-- transaction log -->
+    <rect x="45" y="335" width="505" height="52" rx="8" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label-sm" x="60" y="357">Transaction log</text>
+    <rect x="160" y="350" width="34" height="18" rx="3" fill="var(--pub)"/>
+    <rect x="200" y="350" width="26" height="18" rx="3" fill="var(--text-muted)" opacity=".45"/>
+    <rect x="232" y="350" width="40" height="18" rx="3" fill="var(--pub)"/>
+    <rect x="278" y="350" width="22" height="18" rx="3" fill="var(--pub)"/>
+    <rect x="306" y="350" width="30" height="18" rx="3" fill="var(--text-muted)" opacity=".45"/>
+    <rect x="342" y="350" width="38" height="18" rx="3" fill="var(--pub)"/>
+    <rect x="386" y="350" width="26" height="18" rx="3" fill="var(--text-muted)" opacity=".45"/>
+    <rect x="418" y="350" width="34" height="18" rx="3" fill="var(--pub)" class="svg-blink"/>
+    <text class="svg-label-xs" x="160" y="400">■ blue = change to a published table (marked “for replication”)   ■ grey = not published</text>
+
+    <path class="svg-edge" d="M425,315 V332" marker-end="url(#parw)"/>
+
+    <!-- log reader -->
+    <rect x="680" y="330" width="170" height="56" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="765" y="353" text-anchor="middle">Log Reader Agent</text>
+    <text class="svg-label-xs" x="765" y="369" text-anchor="middle">calls sp_replcmds repeatedly</text>
+    <path class="svg-edge" d="M550,361 H677" marker-end="url(#parw)"/>
+    <text class="svg-label-xs" x="612" y="351" text-anchor="middle">committed only</text>
+
+    <path d="M550,361 H680" fill="none" stroke="none" data-flow data-start="0" data-travel="1.6" data-dots="4" data-gap="0.5" data-color="var(--pub)" data-shape="cmd"/>
+
+    <!-- oldest non-replicated marker line -->
+    <line x1="232" y1="337" x2="232" y2="390" stroke="var(--danger)" stroke-width="2" stroke-dasharray="4 3"/>
+    <text class="svg-label-xs" x="232" y="412" text-anchor="middle" fill="var(--danger)">oldest un-harvested record — log cannot truncate past this point</text>
+
+    <g class="risk-marker" data-risk="log-reader-latency" transform="translate(550,335)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="large-transactions" transform="translate(47,335)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="schema-changes" transform="translate(550,88)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="pub-db-log-chain" transform="translate(300,88)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--pub)"></span>replicated log records harvested by the Log Reader</span>
+  </div>
+</div>
+
+<h2>Publications and articles</h2>
+<p>
+  A <strong>publication</strong> is the unit of subscription: a named set of articles from a single database.
+  An <strong>article</strong> is one replicated object. For tables you control exactly what ships:
+</p>
+<ul>
+  <li><strong>Row filters</strong> (static): a WHERE clause per article — only matching rows replicate. Merge replication adds <em>parameterized</em> filters (<code>HOST_NAME()</code>, <code>SUSER_SNAME()</code>) and join filters.</li>
+  <li><strong>Column filters</strong>: exclude columns (e.g. PII) from the article. The primary key columns are always required.</li>
+  <li><strong>Schema options</strong> (<code>@schema_option</code> bitmask): whether to script constraints, indexes, triggers, collation, etc. to the subscriber.</li>
+  <li><strong>Pre-creation command</strong> (<code>@pre_creation_cmd</code>): what the snapshot does if the table exists at the subscriber — <code>drop</code> (default), <code>delete</code>, <code>truncate</code>, or <code>none</code>.</li>
+  <li><strong>Delivery format</strong> (<code>@ins_cmd</code>/<code>@upd_cmd</code>/<code>@del_cmd</code>): by default changes apply through auto-generated procedures (<code>CALL sp_MSins_dboOrders</code>…), which is also your hook for custom conflict/soft-delete logic at the subscriber.</li>
+</ul>
+
+<div class="callout warn">
+  <div class="co-title">⚠ Every transactional article needs a primary key</div>
+  <p>Transactional replication requires a PK on every published table — replicated UPDATEs/DELETEs target rows by key.
+  Tables without a PK simply don't appear in the article picker. Merge replication instead requires (and will add) a
+  <code>rowguidcol</code> uniqueidentifier column on every article.</p>
+</div>
+
+<h2>How the log becomes the replication queue</h2>
+<ol class="steps">
+  <li><strong>Mark at commit.</strong> When a database is enabled for transactional publishing (<code>sp_replicationdboption @optname='publish'</code>), log records touching published articles are flagged "for replication". This is why <code>log_reuse_wait_desc</code> can report <code>REPLICATION</code>.</li>
+  <li><strong>Harvest.</strong> The Log Reader Agent calls <code>sp_replcmds</code> in a loop against the publication database. The proc walks the log from the last harvested LSN, returning only <em>committed</em> transactions, already translated into logical commands.</li>
+  <li><strong>Acknowledge.</strong> After writing a batch to the distribution DB, the agent calls <code>sp_repldone</code> to advance the "replicated up to here" watermark. Only records behind the watermark become eligible for log truncation.</li>
+</ol>
+
+<div class="callout danger">
+  <div class="co-title">🛑 sp_repldone is not a cleanup tool</div>
+  <p>Internet folklore suggests <code>EXEC sp_repldone @xactid=NULL, @xact_seqno=NULL, @numtrans=0, @time=0, @reset=1</code>
+  to "fix" a full log. It marks <em>everything</em> as replicated without delivering it — subscribers silently lose those
+  transactions and usually need full reinitialization. Treat it as a last resort performed with eyes open, never a routine fix.</p>
+</div>
+
+<h2>Publisher-side metadata worth querying</h2>
+<pre data-label="T-SQL — publisher checks"><code class="sql">-- what is published in this database?
+USE SalesDB;
+EXEC sp_helppublication;          -- publications
+EXEC sp_helparticle @publication = 'SalesPub';  -- articles + options
+EXEC sp_helpsubscription;         -- who subscribes
+
+-- raw catalog
+SELECT * FROM dbo.syspublications;
+SELECT * FROM dbo.sysarticles;
+SELECT * FROM dbo.syssubscriptions;
+
+-- pending transactions the Log Reader has not harvested yet
+EXEC sp_repltrans;                -- one row per waiting transaction
+DBCC OPENTRAN;                    -- shows oldest replicated (un-harvested) transaction
+
+-- per-database log reader throughput & latency
+EXEC sp_replcounters;
+</code></pre>
+
+<h2>NOT FOR REPLICATION</h2>
+<p>
+  Identity columns, triggers, FK and check constraints can be created <code>NOT FOR REPLICATION</code>: they fire/enforce
+  for normal user DML but are skipped when a replication agent applies changes. This prevents double-firing triggers,
+  identity reseeding by the agent, and FK failures from apply order. The snapshot scripts these automatically when
+  <code>@schema_option</code> includes the relevant bits — but <strong>home-made triggers on subscriber tables are a classic
+  cause of non-convergence</strong> when they are missing the NFR flag.
+</p>
+
+<h2>Publication security</h2>
+<ul>
+  <li><strong>Publication Access List (PAL)</strong> — logins allowed to subscribe and run agents against the publication: <code>sp_help_publication_access</code>, <code>sp_grant_publication_access</code>.</li>
+  <li>The Log Reader Agent connects to the publisher with a login that needs <code>db_owner</code> in the publication database.</li>
+  <li><code>sysadmin</code> is required to configure publishing itself (enabling the database, creating the distributor link).</li>
+</ul>
+
+<h2>Commands that act on the Publisher</h2>
+<p>Full list with syntax on <a href="../commands/publisher-commands.html">Publisher commands</a>. The essentials:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>sp_replicationdboption</code></td><td>Enable/disable a database for publishing (transactional or merge)</td></tr>
+    <tr><td><code>sp_addpublication</code> / <code>sp_changepublication</code> / <code>sp_droppublication</code></td><td>Create / alter / remove a publication</td></tr>
+    <tr><td><code>sp_addarticle</code> / <code>sp_changearticle</code> / <code>sp_droparticle</code></td><td>Manage articles in a transactional/snapshot publication</td></tr>
+    <tr><td><code>sp_articlefilter</code> / <code>sp_articleview</code></td><td>Define a row filter and its synchronization view</td></tr>
+    <tr><td><code>sp_addsubscription</code></td><td>Registers a subscription at the publisher (even for pull)</td></tr>
+    <tr><td><code>sp_removedbreplication</code></td><td><span class="badge danger">DANGER</span> strips all replication metadata from a database — for teardown when normal drops fail</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

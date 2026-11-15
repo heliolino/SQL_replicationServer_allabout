@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring — Performance & Latency</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="monitoring/performance">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Monitoring<span class="sep">›</span>Performance</nav>
+<header class="page-header">
+  <h1>Performance &amp; latency tuning</h1>
+  <p class="lead">
+    Tune in this order: <strong>find the slow queue → fix the root cause → only then turn agent knobs</strong>.
+    Agent parameters amplify a healthy pipeline; they cannot outrun a blocked subscriber or an undersized distributor.
+  </p>
+</header>
+
+<h2>Step 0 — locate the bottleneck</h2>
+<p>Use a <a href="tracer-tokens.html">tracer token</a> to split the latency, then follow the three-queue model from the <a href="../architecture/overview.html">overview</a>. Everything below is organized by which leg is slow.</p>
+
+<h2>Leg 1 slow — publisher → distributor (Log Reader)</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Cause</th><th>Signal</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>Giant transactions</td><td>One xact_seqno with millions of commands</td><td>Batch publisher DML; set <code>-MaxCmdsInTran 10000</code> on the Log Reader so delivery can start before the whole txn is harvested (note: trades strict atomicity at the subscriber)</td></tr>
+    <tr><td>Log file fragmentation / huge VLF count</td><td>Slow log scans, slow recovery too</td><td>Fix VLF layout (shrink + regrow log properly)</td></tr>
+    <tr><td>Publisher IO pressure</td><td>High log read latency in <code>sys.dm_io_virtual_file_stats</code></td><td>Storage; consider a remote distributor to offload</td></tr>
+    <tr><td>Harvest batch too small</td><td>Steady small lag under high txn rate</td><td>Raise <code>-ReadBatchSize</code> (default 500 txns) cautiously</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Leg 2 slow — distributor → subscriber (Distribution Agent)</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Cause</th><th>Signal</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>Subscriber blocking</td><td>Agent session waiting on locks</td><td>RCSI at subscriber; move reports; see ⚠ <em>Subscriber workload blocks agent</em></td></tr>
+    <tr><td>Row-by-row apply overhead</td><td>High cmd count, low delivery rate, no waits</td><td><code>-CommitBatchSize</code> (default 100 txns) up to 1000; <code>-SubscriptionStreams 4</code> for parallel apply (requires no out-of-order dependencies; errors roll back to serial)</td></tr>
+    <tr><td>Missing/odd indexes at subscriber</td><td>High reads per applied command</td><td>Subscriber tables need their PK (always there) and <em>not much else</em> during catch-up; drop exotic subscriber-only indexes during bulk catch-up</td></tr>
+    <tr><td>Network latency to remote subscriber</td><td>Low delivery rate, no server waits</td><td><code>-UseOledbStreaming</code>, bigger batches, or move to pull agent at the subscriber side of the WAN</td></tr>
+    <tr><td>Agent restarts/timeouts in a loop</td><td>History shows same batch retried</td><td>Fix the stuck command (see <a href="../troubleshooting/common-errors.html">common errors</a>) — don't tune around it</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Distributor itself slow</h2>
+<ul>
+  <li><strong>Distribution DB on slow storage</strong> — every command is written once and read N times (N subscribers). Treat it like a busy OLTP database: fast storage, pre-sized files, no autogrow storms.</li>
+  <li><strong>Bloated MSrepl_commands</strong> — cleanup can't keep up or <code>immediate_sync</code> keeps 2 weeks of history (see the <a href="../setup/create-publication.html">@immediate_sync callout</a>). A lean queue is a fast queue.</li>
+  <li><strong>Cleanup job contention</strong> — see ⚠ <em>Distribution cleanup blocking</em>: reschedule, don't disable.</li>
+  <li><strong>Too many agents on one box</strong> — each subscription = one distrib.exe process; hundreds of continuous agents may need agent consolidation (<code>@independent_agent='false'</code>) or staggered schedules.</li>
+</ul>
+
+<h2>Agent parameter cheat sheet</h2>
+<p>Set via <a href="../architecture/agents.html">agent profiles</a> (preferred) or job step command line. Defaults in parentheses.</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Parameter</th><th>Agent</th><th>Meaning</th><th>Guidance</th></tr></thead>
+  <tbody>
+    <tr><td><code>-ReadBatchSize</code> (500)</td><td>Log Reader</td><td>Txns read from log per cycle</td><td>Raise for high-volume OLTP; watch distributor write pressure</td></tr>
+    <tr><td><code>-MaxCmdsInTran</code> (0 = off)</td><td>Log Reader</td><td>Split huge txns into chunks of N commands</td><td>Incident lifesaver for accidental mass updates; document that subscriber atomicity changes</td></tr>
+    <tr><td><code>-PollingInterval</code> (5 s)</td><td>Log Reader / Distribution</td><td>Idle wait between scans</td><td>Lowering below 5 s buys little; raising saves CPU on quiet systems</td></tr>
+    <tr><td><code>-CommitBatchSize</code> (100)</td><td>Distribution</td><td>Txns applied per subscriber commit</td><td>100→1000 for catch-up storms; bigger batches = bigger rollback on error</td></tr>
+    <tr><td><code>-CommitBatchThreshold</code> (1000)</td><td>Distribution</td><td>Commands per subscriber commit</td><td>Tune together with CommitBatchSize</td></tr>
+    <tr><td><code>-SubscriptionStreams</code> (1)</td><td>Distribution</td><td>Parallel apply connections</td><td>2–8 for big backlogs on fast subscribers; falls back to serial on conflicts</td></tr>
+    <tr><td><code>-QueryTimeout</code> (1800 s)</td><td>All</td><td>Per-statement timeout</td><td>Raise only after fixing why statements are slow</td></tr>
+    <tr><td><code>-LoginTimeout</code> (15 s)</td><td>All</td><td>Connection timeout</td><td>Raise for flaky WAN links</td></tr>
+    <tr><td><code>-SkipErrors</code></td><td>Distribution</td><td>Error numbers to skip past</td><td><span class="badge danger">Dangerous</span> — hides divergence; incident stopgap only, with a convergence validation after</td></tr>
+    <tr><td><code>-OutputVerboseLevel</code> (1)</td><td>All</td><td>Logging detail with <code>-Output file</code></td><td>2 for debugging, then turn off — it's slow and the file grows fast</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Design-level levers (bigger than any knob)</h2>
+<ul>
+  <li><strong>Publish less:</strong> row/column filters, and don't publish audit/log tables nobody reads at the subscriber.</li>
+  <li><strong>Replicate the execution of stored procedures</strong> for mass maintenance operations (article type <code>proc exec</code>): one proc call replicates instead of a million row commands. Requires determinism at the subscriber — use deliberately.</li>
+  <li><strong>Multiple publications</strong> per database to give independent agents to hot vs. cold tables — one table's backlog stops dragging everything.</li>
+  <li><strong>Pull agents</strong> move apply CPU to subscribers when distributor CPU is the ceiling.</li>
+  <li><strong>Initialize from backup</strong> for new large subscribers instead of monster snapshots.</li>
+</ul>
+
+<h2>Catch-up playbook (after an outage)</h2>
+<ol class="steps">
+  <li><strong>Confirm root cause fixed</strong> and agents running; backlog draining (queue count decreasing over 2–3 samples).</li>
+  <li><strong>Estimate drain time:</strong> pending commands ÷ current delivery rate (both from <code>sp_replmonitorsubscriptionpendingcmds</code> / history). Communicate it.</li>
+  <li><strong>If too slow:</strong> temporary profile with CommitBatchSize 1000 / CommitBatchThreshold 2000, SubscriptionStreams 4; pause heavy subscriber reports; verify cleanup isn't fighting the agents.</li>
+  <li><strong>If drain time exceeds retention runway</strong> (subscription will expire first): raise publication <code>@retention</code> <em>now</em>, or accept reinitialization and plan it.</li>
+  <li><strong>Afterwards:</strong> revert profiles to defaults; post a tracer token to confirm steady-state; write down the numbers for next time.</li>
+</ol>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Common Errors</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="troubleshooting/common-errors">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Troubleshooting<span class="sep">›</span>Common Errors</nav>
+<header class="page-header">
+  <h1>Common errors — cause, triage, fix</h1>
+  <p class="lead">
+    The errors a replication support engineer actually meets, ordered by how often they page you.
+    Every fix below assumes you've located the failing agent and read its full error text
+    (<code>MSrepl_errors</code> / agent session history — not just job history).
+  </p>
+</header>
+
+<h2 id="e20598">Error 20598 — "The row was not found at the Subscriber"</h2>
+<div class="tbl-wrap"><table>
+  <tbody>
+    <tr><td><strong>Agent</strong></td><td>Distribution Agent — stops, retries the same transaction forever</td></tr>
+    <tr><td><strong>Cause</strong></td><td>A replicated UPDATE/DELETE targets a row that doesn't exist at the subscriber: someone deleted/changed subscriber data directly, a previous skip, or a bad reinit</td></tr>
+    <tr><td><strong>Triage</strong></td><td>Identify the failing command: take <code>xact_seqno</code> and <code>command_id</code> from the error detail, decode with <code>sp_browsereplcmds</code> → gives you table + PK values</td></tr>
+    <tr><td><strong>Fix</strong></td><td>Re-insert the missing row at the subscriber (copy from publisher by PK) → agent proceeds. If drift is broad: <code>tablediff.exe -f</code> to generate a repair script, or reinitialize the subscription</td></tr>
+    <tr><td><strong>Avoid</strong></td><td><code>-SkipErrors 20598</code> as a "fix" — it converts a visible stop into silent divergence. Acceptable only to restore flow during a major incident, followed by validation + repair</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="e2627">Errors 2601 / 2627 — duplicate key at the Subscriber</h2>
+<p>The mirror image of 20598: a replicated INSERT finds the row already there (local writes, double-applied batch after an unclean agent stop). Same triage via <code>sp_browsereplcmds</code>; fix by deleting/merging the conflicting subscriber row. Recurring 2627s on identity PKs at a <em>writable</em> subscriber = identity range misconfiguration — see <a href="#e548">error 548</a>.</p>
+
+<h2 id="elogfull">Log file full — <code>log_reuse_wait_desc = REPLICATION</code></h2>
+<div class="tbl-wrap"><table>
+  <tbody>
+    <tr><td><strong>Symptom</strong></td><td>Publication DB log grows despite log backups; eventually 9002 (log full), writes stop</td></tr>
+    <tr><td><strong>Cause</strong></td><td>Log Reader not harvesting: agent down/failing, giant transaction in progress, or replication/CDC remnants after a sloppy teardown</td></tr>
+    <tr><td><strong>Triage</strong></td><td><code>sp_replcounters</code> (pending txns?), Log Reader job history, <code>DBCC OPENTRAN</code> (oldest replicated txn), is the DB even published? <code>SELECT is_published, is_cdc_enabled FROM sys.databases</code></td></tr>
+    <tr><td><strong>Fix (agent down)</strong></td><td>Fix and start the Log Reader; log clears at next backup/checkpoint after harvest catches up</td></tr>
+    <tr><td><strong>Fix (orphaned metadata, replication NOT wanted)</strong></td><td><code>EXEC sp_removedbreplication N'SalesDB';</code> — and if the marker persists, the last-resort watermark reset:
+      <pre data-label="T-SQL — LAST RESORT: abandons undelivered changes"><code class="sql">EXEC sp_repldone @xactid = NULL, @xact_seqno = NULL,
+     @numtrans = 0, @time = 0, @reset = 1;
+EXEC sp_replflush;
+-- any existing subscribers are now inconsistent → must be reinitialized</code></pre></td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="e18456">Error 18456 / 18452 — agent login failures</h2>
+<p>
+  After password rotations or permission hardening. Read the state code in the error (state 5 = unknown login,
+  state 38 = can't open database). Fix with the <a href="../commands/agent-commands.html">credential-rotation runbook</a> —
+  via the <code>sp_change*_agent</code> procs, not by editing job steps. Remember each agent makes <em>multiple</em>
+  connections (distributor + publisher + subscriber): the failing side is named in the message.
+</p>
+
+<h2 id="e21074">Error 21074 / "subscription(s) have been marked inactive"</h2>
+<p>
+  Retention expired while a subscriber was down (or the Distribution Agent was stopped long enough).
+  <code>MSsubscriptions.status = 0</code>. There is no shortcut: <strong>reinitialize</strong>
+  (<code>sp_reinitsubscription</code> + snapshot, or initialize from backup). Prevention is the whole game —
+  alert on "days since last sync" vs retention (see <a href="../monitoring/alerts.html">Alerts</a>).
+</p>
+
+<h2 id="etimeout">"Query timeout expired" — the agent retry loop</h2>
+<ol class="steps">
+  <li><strong>Find what the apply statement waits on</strong> at the subscriber: <code>sys.dm_exec_requests</code> where <code>program_name LIKE '%distrib%'</code> → blocking session? long IO?</li>
+  <li><strong>Fix the wait</strong>: kill/relocate the blocking report, add the missing index, resolve autogrowth stalls.</li>
+  <li>Only then consider a profile with larger <code>-QueryTimeout</code> for genuinely long applies (huge batches on slow links).</li>
+</ol>
+
+<h2 id="e20011">Errors 20011 / 18752 / 18773 — Log Reader vs. the log</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Message</th><th>Meaning</th><th>Response</th></tr></thead>
+  <tbody>
+    <tr><td>18752 "Only one Log Reader Agent or log-related procedure can connect"</td><td>Another session holds the sp_replcmds reservation (often an engineer who ran it in SSMS)</td><td>Find &amp; kill that session, run <code>sp_replflush</code>, restart agent</td></tr>
+    <tr><td>18773/18805 "Could not locate text information records" / scan errors</td><td>Log reader confused by log damage or unsupported operations</td><td>Open a support case path: often requires reinit of the publication; do not improvise with sp_repldone</td></tr>
+    <tr><td>20011 "The process could not execute 'sp_replcmds'"</td><td>Wrapper for an underlying error — read the next error in history</td><td>Fix the underlying error (permissions, 18752, log issues)</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="e548">Error 548 — identity range check constraint (merge)</h2>
+<p>
+  "The insert failed. It conflicted with an identity range check constraint…" — the node exhausted its allocated
+  identity range offline. Run the Merge Agent (gets a fresh range), or at the publisher
+  <code>sp_adjustpublisheridentityrange</code>. Then resize ranges so the longest realistic offline period fits
+  (<code>@identity_range</code> on the article). Details: ⚠ <em>Merge identity range exhaustion</em> on the
+  <a href="risk-areas.html">risk checklist</a>.</p>
+
+<h2 id="e22815">Error 22815 — peer-to-peer conflict</h2>
+<p>
+  By design, agents stop. The message names the two originator ids and the row. Decide the business-correct winner,
+  fix the losing peer's row manually, restart agents — then <strong>fix the application's write partitioning</strong>,
+  which is the actual defect. Never flip <code>@p2p_continue_onconflict</code> as a permanent "fix"
+  (<a href="../types/peer-to-peer.html">why</a>).
+</p>
+
+<h2 id="eaccess">OS error 5 / 3 — snapshot delivery failures</h2>
+<p>
+  "The process could not read file <code>\\DIST\ReplData\…\Orders_1.bcp</code>" — access denied (5) or path not found (3).
+  Almost always: snapshot folder configured with a local path while a pull agent runs elsewhere, or NTFS/share ACLs
+  missing for the agent account. Test as the agent account (<kbd>runas</kbd>), fix path to UNC / grant read.
+  See ⚠ <em>Snapshot folder permissions</em>.
+</p>
+
+<h2 id="eschema">Schema-change breakages</h2>
+<ul>
+  <li>"Invalid column name" at subscriber right after a deployment → DDL replicated out of order with DML, or <code>replicate_ddl=0</code> and schemas drifted. Compare article schema both sides; worst case re-snapshot the article.</li>
+  <li>Cannot ALTER a published column: some DDL is blocked while published — drop the article, alter, re-add + re-snapshot.</li>
+  <li>"Cannot drop the table because it is being used for replication" (3724) — the table is an article; remove it from the publication first.</li>
+</ul>
+
+<h2>The generic triage ladder (when the error is new to you)</h2>
+<ol class="steps">
+  <li><strong>Which agent?</strong> Replication Monitor or the watchdog queries → failing/retrying subscription.</li>
+  <li><strong>Full error text:</strong> agent session detail or <code>MSrepl_errors</code> (job history truncates).</li>
+  <li><strong>Which of the three queues is backing up?</strong> (<a href="../architecture/overview.html">overview model</a>) — tells you which server to log into.</li>
+  <li><strong>Reproduce understanding:</strong> decode the exact failing command (<code>sp_browsereplcmds</code>) before changing anything.</li>
+  <li><strong>Fix forward</strong> (repair row, fix perms, clear block) rather than skip/reinit, unless retention math says reinit is already inevitable.</li>
+  <li><strong>Afterwards:</strong> tracer token for flow, validation for convergence, note in the runbook.</li>
+</ol>
+
+</main>
+</div>
+</body>
+</html>

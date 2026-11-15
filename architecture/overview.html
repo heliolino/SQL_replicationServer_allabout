@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replication Architecture Overview</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="architecture/overview">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Architecture<span class="sep">›</span>Overview</nav>
+<header class="page-header">
+  <h1>Component Overview — the whole machine</h1>
+  <p class="lead">
+    This is the complete transactional replication pipeline, animated end-to-end. Blue dots are
+    committed transactions being harvested; purple dots are commands being delivered; amber shapes are
+    snapshot files used for initialization. Every pulsing ⚠ marker is a real risk area — click it.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="14" viewBox="0 0 1100 540" role="img" aria-label="Full transactional replication pipeline with all components">
+    <defs>
+      <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/>
+      </marker>
+    </defs>
+
+    <!-- zones -->
+    <rect class="svg-zone" x="20"  y="70" width="300" height="445" rx="14"/>
+    <rect class="svg-zone" x="350" y="70" width="380" height="445" rx="14"/>
+    <rect class="svg-zone" x="760" y="70" width="320" height="445" rx="14"/>
+    <text class="svg-zone-label" x="35"  y="92">Publisher server</text>
+    <text class="svg-zone-label" x="365" y="92">Distributor server</text>
+    <text class="svg-zone-label" x="775" y="92">Subscriber server</text>
+
+    <!-- Publisher -->
+    <rect class="svg-node" x="50" y="110" width="140" height="44" rx="8"/>
+    <text class="svg-label" x="120" y="131" text-anchor="middle">Applications</text>
+    <text class="svg-label-xs" x="120" y="146" text-anchor="middle">INSERT / UPDATE / DELETE</text>
+
+    <path d="M70,215 a90,16 0 1,0 180,0 a90,16 0 1,0 -180,0 M70,215 v60 a90,16 0 0,0 180,0 v-60" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="160" y="250" text-anchor="middle">Publication DB</text>
+    <text class="svg-label-xs" x="160" y="266" text-anchor="middle">publication → articles (tables, procs, views)</text>
+
+    <rect x="70" y="340" width="180" height="60" rx="8" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="160" y="362" text-anchor="middle">Transaction Log</text>
+    <rect x="85"  y="375" width="30" height="8" rx="2" fill="var(--pub)" opacity=".85"/>
+    <rect x="120" y="375" width="44" height="8" rx="2" fill="var(--pub)" opacity=".6"/>
+    <rect x="169" y="375" width="22" height="8" rx="2" fill="var(--pub)" opacity=".4"/>
+    <rect x="196" y="375" width="36" height="8" rx="2" fill="var(--pub)" opacity=".25" class="svg-blink"/>
+
+    <path class="svg-edge" d="M120,154 V197" marker-end="url(#arrow2)"/>
+    <path class="svg-edge" d="M160,293 V337" marker-end="url(#arrow2)"/>
+    <text class="svg-label-xs" x="172" y="320">marked for replication</text>
+
+    <!-- Distributor: agents -->
+    <rect x="380" y="110" width="150" height="50" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="455" y="131" text-anchor="middle">Snapshot Agent</text>
+    <text class="svg-label-xs" x="455" y="147" text-anchor="middle">snapshot.exe · runs on demand</text>
+
+    <rect x="380" y="345" width="150" height="50" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="455" y="366" text-anchor="middle">Log Reader Agent</text>
+    <text class="svg-label-xs" x="455" y="382" text-anchor="middle">logread.exe · continuous</text>
+
+    <!-- snapshot folder -->
+    <path d="M590,112 h40 l10,10 h80 v48 h-130 z" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="655" y="140" text-anchor="middle">Snapshot folder</text>
+    <text class="svg-label-xs" x="655" y="156" text-anchor="middle">\\dist\repldata (.sch .bcp .pre .idx)</text>
+
+    <!-- distribution DB -->
+    <path d="M590,335 a60,13 0 1,0 120,0 a60,13 0 1,0 -120,0 M590,335 v55 a60,13 0 0,0 120,0 v-55" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.8"/>
+    <text class="svg-label" x="650" y="366" text-anchor="middle">distribution</text>
+    <text class="svg-label-xs" x="650" y="382" text-anchor="middle">MSrepl_commands · MSrepl_transactions</text>
+
+    <!-- Subscriber -->
+    <rect x="780" y="345" width="160" height="50" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="860" y="366" text-anchor="middle">Distribution Agent</text>
+    <text class="svg-label-xs" x="860" y="382" text-anchor="middle">distrib.exe · push or pull</text>
+
+    <path d="M810,195 a80,14 0 1,0 160,0 a80,14 0 1,0 -160,0 M810,195 v60 a80,14 0 0,0 160,0 v-60" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.8"/>
+    <text class="svg-label" x="890" y="228" text-anchor="middle">Subscription DB</text>
+    <text class="svg-label-xs" x="890" y="244" text-anchor="middle">sp_MSins_… sp_MSupd_… sp_MSdel_…</text>
+
+    <!-- edges -->
+    <path class="svg-edge" d="M250,370 H377" marker-end="url(#arrow2)"/>
+    <text class="svg-label-xs" x="313" y="360" text-anchor="middle">sp_replcmds</text>
+    <path class="svg-edge" d="M530,370 H586" marker-end="url(#arrow2)"/>
+    <path class="svg-edge" d="M710,368 H777" marker-end="url(#arrow2)"/>
+    <path class="svg-edge" d="M860,345 V285" marker-end="url(#arrow2)"/>
+    <path class="svg-edge svg-edge-dashed" d="M250,230 C320,230 320,135 377,135" marker-end="url(#arrow2)"/>
+    <text class="svg-label-xs" x="318" y="178" text-anchor="middle">BCP articles</text>
+    <path class="svg-edge svg-edge-dashed" d="M530,135 H586" marker-end="url(#arrow2)"/>
+    <path class="svg-edge svg-edge-dashed" d="M655,172 C655,285 745,310 783,345" marker-end="url(#arrow2)"/>
+    <text class="svg-label-xs" x="700" y="300" text-anchor="middle">initial sync</text>
+
+    <!-- animation paths -->
+    <path d="M120,154 V197" fill="none" stroke="none" data-flow data-start="0"    data-travel="0.7" data-dots="2" data-gap="0.45" data-color="var(--pub)"/>
+    <path d="M160,293 V337" fill="none" stroke="none" data-flow data-start="0.8"  data-travel="0.7" data-dots="2" data-gap="0.45" data-color="var(--pub)"/>
+    <path d="M250,370 H380" fill="none" stroke="none" data-flow data-start="1.7"  data-travel="1.4" data-dots="3" data-gap="0.4"  data-color="var(--pub)"/>
+    <path d="M530,370 H590" fill="none" stroke="none" data-flow data-start="3.3"  data-travel="0.8" data-dots="3" data-gap="0.4"  data-color="var(--pub)"/>
+    <path d="M710,368 H780" fill="none" stroke="none" data-flow data-start="5.0"  data-travel="0.9" data-dots="3" data-gap="0.4"  data-color="var(--dist)"/>
+    <path d="M860,345 V285" fill="none" stroke="none" data-flow data-start="6.2"  data-travel="0.8" data-dots="3" data-gap="0.4"  data-color="var(--dist)"/>
+    <path d="M250,230 C320,230 320,135 380,135" fill="none" stroke="none" data-flow data-start="8.5"  data-travel="1.5" data-dots="1" data-color="var(--agent)"/>
+    <path d="M530,135 H590" fill="none" stroke="none" data-flow data-start="10.2" data-travel="0.8" data-dots="2" data-gap="0.35" data-color="var(--agent)" data-shape="cmd"/>
+    <path d="M655,172 C655,285 745,310 790,345" fill="none" stroke="none" data-flow data-start="11.2" data-travel="1.6" data-dots="2" data-gap="0.4" data-color="var(--agent)" data-shape="cmd"/>
+
+    <!-- risk markers -->
+    <g class="risk-marker" data-risk="large-transactions"   transform="translate(72,338)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="log-reader-latency"   transform="translate(250,338)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="pub-db-log-chain"     transform="translate(252,205)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="agent-job-stopped"    transform="translate(382,343)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="agent-login-failure"  transform="translate(530,343)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="dist-db-growth"       transform="translate(712,330)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="cleanup-blocking"     transform="translate(590,405)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="retention-expired"    transform="translate(655,412)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-disk-space"  transform="translate(592,110)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-share-perms" transform="translate(722,110)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="query-timeout"        transform="translate(940,343)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="row-not-found"        transform="translate(972,192)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="subscriber-blocking"  transform="translate(808,192)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--pub)"></span>committed transactions → commands</span>
+    <span><span class="legend-dot" style="background:var(--dist)"></span>command delivery</span>
+    <span><span class="legend-dot" style="background:var(--agent)"></span>snapshot (initialization)</span>
+  </div>
+</div>
+
+<h2>The three server roles</h2>
+<div class="card-grid">
+  <a class="card" href="publisher.html"><h3><span class="badge pub">Publisher</span></h3><p>Owns the source data. Defines publications and articles. Its transaction log is the beating heart of transactional replication.</p></a>
+  <a class="card" href="distributor.html"><h3><span class="badge dist">Distributor</span></h3><p>Hosts the <code>distribution</code> database — the store-and-forward queue, agent history, and cleanup jobs. Local (same server as publisher) or remote.</p></a>
+  <a class="card" href="subscriber.html"><h3><span class="badge sub">Subscriber</span></h3><p>Receives data via push or pull subscriptions. Readable immediately; writable only in merge / P2P / updatable designs.</p></a>
+</div>
+<p>One physical server can hold several roles at once — the smallest topology is a single instance acting as Publisher + Distributor with a Subscriber database on the same machine.</p>
+
+<h2>The five agents — who runs where</h2>
+<p>
+  Agents are stand-alone executables (in <code>…\COM\</code> under the SQL Server installation directory)
+  that SQL Server Agent runs as job steps. Each is a separate Windows process connecting to two or three
+  servers. Full mechanics with per-agent animations: <a href="agents.html">Replication Agents</a>.
+</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Agent</th><th>Executable</th><th>Used by</th><th>Runs at</th><th>Job runs</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Snapshot Agent</strong></td><td><code>snapshot.exe</code></td><td>All types</td><td>Distributor</td><td>On demand / scheduled</td><td>Generates schema + BCP files for initialization into the snapshot folder</td></tr>
+    <tr><td><strong>Log Reader Agent</strong></td><td><code>logread.exe</code></td><td>Transactional, P2P</td><td>Distributor</td><td>Continuous (one per published DB)</td><td>Moves committed changes from the publisher's log into the distribution DB</td></tr>
+    <tr><td><strong>Distribution Agent</strong></td><td><code>distrib.exe</code></td><td>Snapshot, transactional</td><td>Distributor (push) / Subscriber (pull)</td><td>Continuous or scheduled</td><td>Applies snapshot and queued commands to subscribers</td></tr>
+    <tr><td><strong>Merge Agent</strong></td><td><code>replmerg.exe</code></td><td>Merge</td><td>Distributor (push) / Subscriber (pull)</td><td>Scheduled sync sessions</td><td>Exchanges changes both ways and resolves conflicts</td></tr>
+    <tr><td><strong>Queue Reader Agent</strong></td><td><code>qrdrsvc.exe</code></td><td>Updatable subscriptions (deprecated)</td><td>Distributor</td><td>Continuous (one per distributor)</td><td>Applies subscriber-side queued changes back at the publisher</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Where everything lives on disk and in msdb</h2>
+<ul>
+  <li><strong>Publication database</strong> — publisher-side metadata: <code>sysarticles</code>, <code>syspublications</code>, <code>systranschemas</code>, plus <code>IsPublished</code> markings in the log.</li>
+  <li><strong>distribution database</strong> — commands (<code>MSrepl_commands</code>), transactions (<code>MSrepl_transactions</code>), subscriptions (<code>MSsubscriptions</code>), agent metadata and history (<code>MSlogreader_history</code>, <code>MSdistribution_history</code>, <code>MSsnapshot_history</code>, <code>MSmerge_history</code>), errors (<code>MSrepl_errors</code>).</li>
+  <li><strong>msdb</strong> (on each server running agents) — the SQL Agent jobs in categories <code>REPL-LogReader</code>, <code>REPL-Distribution</code>, <code>REPL-Snapshot</code>, <code>REPL-Merge</code>, plus cleanup and monitoring jobs.</li>
+  <li><strong>Snapshot folder</strong> — the UNC working directory holding generated <code>.sch</code> (schema), <code>.bcp</code> (data), <code>.pre</code> (pre-scripts), <code>.idx</code>/<code>.dri</code> (indexes/constraints) files.</li>
+  <li><strong>Subscription database</strong> — the delivered tables plus the auto-generated apply procedures (<code>sp_MSins_*</code>, <code>sp_MSupd_*</code>, <code>sp_MSdel_*</code>) and, for transactional, <code>MSreplication_subscriptions</code>.</li>
+</ul>
+
+<h2>Support-engineer mental model</h2>
+<div class="callout ok">
+  <div class="co-title">✅ The one-sentence model</div>
+  <p>Transactional replication is a <strong>pipeline of three queues</strong>: the publisher's transaction log
+  (drained by the Log Reader), the distribution database (drained by Distribution Agents), and the batch the agent
+  is currently applying at the subscriber (drained by the subscriber's ability to commit). <strong>Every latency
+  incident is one of these three queues backing up</strong> — your first job is to find which one.</p>
+</div>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Queue backing up</th><th>Classic cause</th><th>First check</th></tr></thead>
+  <tbody>
+    <tr><td>Publisher log → Log Reader</td><td>Log Reader stopped/failing; giant transaction; log chain broken</td><td><code>sp_replcounters</code>, Log Reader job history</td></tr>
+    <tr><td>distribution DB → Distribution Agent</td><td>Agent stopped; subscriber unreachable; one bad command erroring</td><td>Replication Monitor undistributed commands; <code>MSdistribution_status</code></td></tr>
+    <tr><td>Apply at subscriber</td><td>Blocking by reports; missing index; query timeout loop</td><td><code>sys.dm_exec_requests</code> at subscriber filtered on <code>program_name LIKE '%distrib%'</code></td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring — DMVs, Procs & Tables</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="monitoring/dmvs-and-tables">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Monitoring<span class="sep">›</span>DMVs, Procs &amp; Tables</nav>
+<header class="page-header">
+  <h1>The query toolbox — DMVs, procs &amp; metadata tables</h1>
+  <p class="lead">
+    The scripted equivalents of everything the GUI shows, organised by the question you're answering.
+    Copy-paste ready; replace names in <code>'quotes'</code>.
+  </p>
+</header>
+
+<h2>❓ "Is replication healthy right now?" — the 60-second sweep</h2>
+<pre data-label="T-SQL — run at the DISTRIBUTOR"><code class="sql">USE distribution;
+
+-- 1. rollup per publication (status 6=failed, 5=retrying are your fires)
+EXEC sp_replmonitorhelppublication @publisher = N'PUB01';
+
+-- 2. per subscription with latency
+EXEC sp_replmonitorhelpsubscription @publisher = N'PUB01', @publication_type = 0;
+
+-- 3. any recent agent errors?
+SELECT TOP 20 time, error_text = CONVERT(nvarchar(4000), error_text), source_name
+FROM dbo.MSrepl_errors ORDER BY time DESC;
+
+-- 4. are REPL jobs running / recently failed?
+SELECT j.name, c.name AS category, a.start_execution_date, a.stop_execution_date
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+LEFT JOIN msdb.dbo.sysjobactivity a ON a.job_id = j.job_id
+  AND a.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions)
+WHERE c.name LIKE 'REPL-%'
+ORDER BY c.name, j.name;
+</code></pre>
+
+<h2>❓ "How big is the backlog?"</h2>
+<pre data-label="T-SQL — distributor"><code class="sql">USE distribution;
+
+-- raw queue depth (fast, approximate)
+SELECT COUNT(*) AS commands_in_queue FROM dbo.MSrepl_commands WITH (NOLOCK);
+
+-- per subscription, with estimated apply time (what the GUI shows)
+EXEC sp_replmonitorsubscriptionpendingcmds
+     @publisher = N'PUB01', @publisher_db = N'SalesDB', @publication = N'SalesPub',
+     @subscriber = N'SUB01', @subscriber_db = N'SalesReporting', @subscription_type = 0;
+
+-- biggest transactions in the queue (large-transaction incidents)
+SELECT TOP 10 t.xact_seqno, t.entry_time, cmds = COUNT(*)
+FROM dbo.MSrepl_transactions t
+JOIN dbo.MSrepl_commands c ON c.xact_seqno = t.xact_seqno
+GROUP BY t.xact_seqno, t.entry_time
+ORDER BY cmds DESC;
+</code></pre>
+
+<h2>❓ "Is the Log Reader keeping up?" — publisher side</h2>
+<pre data-label="T-SQL — run at the PUBLISHER"><code class="sql">-- throughput + latency estimate per published DB
+EXEC sp_replcounters;
+-- columns: replicated transactions (waiting), replication rate (txn/s),
+--          replication latency (s), replbeginlsn / replnextlsn
+
+-- what is pinning the log?
+SELECT name, log_reuse_wait_desc FROM sys.databases WHERE name = N'SalesDB';
+-- REPLICATION here + growing log = log reader behind or CDC/repl orphaned
+
+-- transactions committed but not yet harvested
+DBCC OPENTRAN (N'SalesDB');          -- shows oldest replicated txn
+EXEC sp_repltrans;                    -- list of all waiting txns (publication DB context)
+</code></pre>
+<div class="callout danger">
+  <div class="co-title">🛑 Orphaned "REPLICATION" log_reuse_wait</div>
+  <p>If replication was removed carelessly (or CDC shares the log reader), the log can stay pinned forever.
+  After confirming <strong>no publications remain and none are wanted</strong>, the documented fix is
+  <code>EXEC sp_removedbreplication N'SalesDB';</code> — and for a truly stuck log the last resort
+  <code>sp_repldone</code> reset (see <a href="../troubleshooting/common-errors.html">common errors</a> for the exact
+  sequence and its dangers).</p>
+</div>
+
+<h2>❓ "What exactly is the agent doing / saying?"</h2>
+<pre data-label="T-SQL — distributor history tables"><code class="sql">USE distribution;
+
+-- distribution agent sessions, newest first
+SELECT TOP 30 a.name, h.start_time, h.duration,
+       h.delivered_commands, h.current_delivery_rate, h.comments
+FROM dbo.MSdistribution_history h
+JOIN dbo.MSdistribution_agents a ON a.id = h.agent_id
+ORDER BY h.start_time DESC;
+
+-- log reader sessions
+SELECT TOP 30 a.name, h.start_time, h.delivered_commands, h.comments
+FROM dbo.MSlogreader_history h
+JOIN dbo.MSlogreader_agents a ON a.id = h.agent_id
+ORDER BY h.start_time DESC;
+
+-- same pattern: MSsnapshot_history, MSmerge_history
+</code></pre>
+<p>For deep debugging, add verbose output to the agent job step and re-run:
+<code>-Output C:\Temp\distrib.log -OutputVerboseLevel 2</code> — the full command stream and timings land in the file.</p>
+
+<h2>❓ "Are publisher and subscriber actually identical?" — validation</h2>
+<pre data-label="T-SQL — row-count / checksum validation"><code class="sql">-- transactional: queue validation requests for all articles
+USE SalesDB;
+EXEC sp_publication_validation
+     @publication = N'SalesPub',
+     @rowcount_only = 2,     -- 1 = rowcount only, 2 = rowcount + binary checksum
+     @full_or_fast = 2;      -- fast rowcount from metadata where possible
+
+-- results arrive as messages in the Distribution Agent history;
+-- failures also fire the 'Peer-to-peer/validation failure' alert class (20574)
+
+-- merge equivalent
+EXEC sp_validatemergesubscription
+     @publication = N'FieldSalesPub',
+     @subscriber = N'DEV-LAPTOP-07', @subscriber_db = N'FieldSales',
+     @level = 3;             -- rowcount + checksum
+
+-- offline comparison / repair-script generation (command line):
+-- tablediff.exe -sourceserver PUB01 -sourcedatabase SalesDB -sourcetable Orders
+--               -destinationserver SUB01 -destinationdatabase SalesReporting
+--               -destinationtable Orders -f C:\Temp\fix_Orders.sql
+</code></pre>
+
+<h2>Metadata table map — where to look for what</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Location</th><th>Table/proc</th><th>Tells you</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="4"><span class="badge dist">distribution</span></td><td><code>MSrepl_commands / MSrepl_transactions</code></td><td>The queue itself (browse via <code>sp_browsereplcmds</code>)</td></tr>
+    <tr><td><code>MSsubscriptions</code></td><td>Subscription state (0 inactive / 1 subscribed / 2 active), per-article watermark</td></tr>
+    <tr><td><code>MS*_history</code>, <code>MSrepl_errors</code></td><td>Agent session log + full error text</td></tr>
+    <tr><td><code>MSdistribution_agents</code> etc.</td><td>Agent inventory: names ↔ jobs ↔ subscriptions mapping</td></tr>
+    <tr><td rowspan="3"><span class="badge pub">publication DB</span></td><td><code>syspublications / sysarticles / syssubscriptions</code></td><td>What is published, to whom</td></tr>
+    <tr><td><code>sysreplservers</code></td><td>Known replication server names (name-mismatch debugging)</td></tr>
+    <tr><td><code>sp_helppublication / sp_helparticle / sp_helpsubscription</code></td><td>Friendly views of the above</td></tr>
+    <tr><td rowspan="2"><span class="badge sub">subscription DB</span></td><td><code>MSreplication_subscriptions</code></td><td>Pull/push bookmark: last applied LSN, agent info</td></tr>
+    <tr><td><code>sp_MSins_* / sp_MSupd_* / sp_MSdel_*</code> procs</td><td>Exist = initialized as transactional subscriber; also where custom apply logic hides</td></tr>
+    <tr><td><span class="badge neutral">msdb (each server)</span></td><td><code>sysjobs / sysjobhistory</code> (categories REPL-*)</td><td>Job states & schedules; coarse history</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Perfmon counters (for dashboards)</h2>
+<ul>
+  <li><code>SQLServer:Replication Agents</code> — running agent counts by type.</li>
+  <li><code>SQLServer:Replication Log Reader</code> — <em>Logreader:Delivered Cmds/sec</em>, <em>Delivery Latency</em>.</li>
+  <li><code>SQLServer:Replication Dist.</code> — <em>Dist:Delivered Cmds/sec</em>, <em>Delivery Latency</em> — trend these two against business volume for capacity planning.</li>
+  <li><code>SQLServer:Databases(distribution)</code> — log/data file sizes: your early-warning on retention problems.</li>
+</ul>
+
+</main>
+</div>
+</body>
+</html>

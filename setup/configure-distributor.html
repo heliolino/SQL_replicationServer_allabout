@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Configure the Distributor</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="setup/configure-distributor">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Setup<span class="sep">›</span>Configure Distributor</nav>
+<header class="page-header">
+  <h1>Step 1 — Configure the Distributor</h1>
+  <p class="lead">
+    Everything else depends on this step: it creates the <code>distribution</code> database, binds the
+    publisher to its distributor, sets the snapshot folder, and installs the cleanup jobs.
+    Affects: <span class="badge dist">Distributor</span> and the <span class="badge pub">Publisher</span>↔Distributor link.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg viewBox="0 0 960 230" role="img" aria-label="What distributor configuration creates">
+    <defs><marker id="cdar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+    <rect x="40" y="80" width="180" height="70" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="130" y="110" text-anchor="middle">Publisher</text>
+    <text class="svg-label-xs" x="130" y="128" text-anchor="middle">registered via sp_adddistpublisher</text>
+    <rect x="400" y="40" width="220" height="160" rx="10" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.8"/>
+    <text class="svg-label" x="510" y="68" text-anchor="middle">Distributor</text>
+    <text class="svg-label-xs" x="510" y="96" text-anchor="middle">• distribution database</text>
+    <text class="svg-label-xs" x="510" y="114" text-anchor="middle">• cleanup + checkup jobs</text>
+    <text class="svg-label-xs" x="510" y="132" text-anchor="middle">• agent profiles</text>
+    <text class="svg-label-xs" x="510" y="150" text-anchor="middle">• distributor_admin login</text>
+    <text class="svg-label-xs" x="510" y="168" text-anchor="middle">• snapshot folder setting</text>
+    <path d="M740,95 h40 l10,10 h85 v50 h-135 z" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="807" y="125" text-anchor="middle">\\DIST01\ReplData</text>
+    <path class="svg-edge" d="M220,115 H397" marker-end="url(#cdar)" marker-start="url(#cdar)"/>
+    <text class="svg-label-xs" x="308" y="105" text-anchor="middle">trusted link (distributor_admin)</text>
+    <path class="svg-edge svg-edge-dashed" d="M620,120 H737" marker-end="url(#cdar)"/>
+    <g class="risk-marker" data-risk="distributor-spof"    transform="translate(400,42)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-share-perms" transform="translate(740,92)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+</div>
+
+<h2>Option A — SSMS wizard</h2>
+<ol class="steps">
+  <li><strong>Connect to the distributor instance</strong> in SSMS (often the publisher itself for a local distributor). Right-click <em>Replication</em> → <em>Configure Distribution…</em>. If you don't see a Replication node, the feature isn't installed — back to <a href="prerequisites.html">prerequisites</a>.</li>
+  <li><strong>Distributor page:</strong> choose "<em>&lt;this server&gt; will act as its own Distributor</em>" (local) or "<em>Use the following server</em>" (remote — the remote side must already be configured as a distributor and have a password set for the link).</li>
+  <li><strong>Snapshot folder:</strong> enter the <strong>UNC path</strong> (<code>\\DIST01\ReplData</code>). The wizard warns about local paths — take the warning seriously; pull subscriptions cannot read local paths.</li>
+  <li><strong>Distribution database page:</strong> name (keep <code>distribution</code> unless hosting multiple), and data/log file locations — put them on proper storage, not the system drive.</li>
+  <li><strong>Publishers page:</strong> tick the publishers allowed to use this distributor. For a remote distributor, set the <strong>administrative link password</strong> here (you'll need it again on the publisher side).</li>
+  <li><strong>Finish</strong>, or better: choose <em>Generate script</em> so the configuration is in source control. Verify afterwards with the queries below.</li>
+</ol>
+
+<h2>Option B — pure T-SQL</h2>
+<pre data-label="T-SQL — run at the distributor"><code class="sql">-- 1. make this instance a distributor
+USE master;
+EXEC sp_adddistributor
+     @distributor = @@SERVERNAME,          -- local distributor
+     @password = N'StrongPassword!1';      -- distributor_admin link password
+
+-- 2. create the distribution database
+EXEC sp_adddistributiondb
+     @database = N'distribution',
+     @data_folder = N'D:\SQLData',
+     @log_folder  = N'E:\SQLLogs',
+     @min_distretention = 0,               -- hours
+     @max_distretention = 72,              -- hours: commands kept after delivery
+     @history_retention = 48,              -- hours of agent history
+     @security_mode = 1;                   -- Windows auth
+
+-- 3. register the publisher and its snapshot folder
+EXEC sp_adddistpublisher
+     @publisher = @@SERVERNAME,            -- or 'PUB01' for a remote publisher
+     @distribution_db = N'distribution',
+     @working_directory = N'\\DIST01\ReplData',
+     @security_mode = 1;
+</code></pre>
+<p>For a <strong>remote</strong> distributor: run steps 1–3 at the distributor (with <code>@publisher='PUB01'</code>), then at the publisher run <code>sp_adddistributor @distributor='DIST01', @password='StrongPassword!1'</code> to join it.</p>
+
+<h2>Verify</h2>
+<pre data-label="T-SQL — verification"><code class="sql">EXEC sp_get_distributor;        -- installed? distribution db? remote?
+EXEC sp_helpdistributor;        -- full details incl. working directory
+EXEC sp_helpdistributiondb;     -- retention settings
+EXEC sp_helpdistpublisher;      -- registered publishers
+
+-- the jobs that should now exist on the distributor
+SELECT name FROM msdb.dbo.sysjobs
+WHERE name LIKE 'Distribution clean up%'
+   OR name LIKE 'Agent history clean up%'
+   OR name LIKE 'Expired subscription clean up%'
+   OR name LIKE 'Replication agents checkup%';
+</code></pre>
+
+<h2>Decisions you are making here (and their blast radius)</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Setting</th><th>Default</th><th>Blast radius if wrong</th></tr></thead>
+  <tbody>
+    <tr><td>Local vs remote distributor</td><td>Local</td><td>Changing later = rebuild all replication on this publisher</td></tr>
+    <tr><td><code>@max_distretention</code> (72 h)</td><td>72 h</td><td>Too low: subscribers offline longer get deactivated → reinit. Too high: distribution DB bloat</td></tr>
+    <tr><td>Publication retention (set later, default 336 h)</td><td>336 h</td><td>Governs subscription <em>expiry</em>; see ⚠ <em>Subscription expiration</em> risk</td></tr>
+    <tr><td>Snapshot folder path</td><td>Local path suggested</td><td>Local path breaks pull subscribers; changing later touches every publication</td></tr>
+    <tr><td>distribution DB files placement</td><td>Default data dir</td><td>IO bottleneck for the whole topology</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout ok">
+  <div class="co-title">✅ Done when…</div>
+  <p><code>sp_get_distributor</code> shows <code>installed = 1</code>, the cleanup jobs exist and succeed on their
+  first scheduled runs, and the snapshot UNC path is browsable from the subscriber's service account
+  (<kbd>runas /user:DOMAIN\replagent cmd</kbd> → <code>dir \\DIST01\ReplData</code>).</p>
+</div>
+
+<p>Next: <a href="create-publication.html">Step 2 — Create the Publication</a>.</p>
+
+</main>
+</div>
+</body>
+</html>

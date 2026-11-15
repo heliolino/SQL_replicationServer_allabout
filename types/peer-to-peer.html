@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peer-to-Peer Replication</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="types/peer-to-peer">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Types<span class="sep">›</span>Peer-to-Peer</nav>
+<header class="page-header">
+  <h1>Peer-to-Peer Transactional Replication</h1>
+  <p class="lead">
+    Transactional replication arranged in a ring/mesh of <strong>equal nodes</strong>: every peer publishes
+    and subscribes to every other peer. Reads scale out everywhere, writes are allowed everywhere —
+    <strong>as long as the application partitions them</strong>. Enterprise Edition only.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="10" viewBox="0 0 960 420" role="img" aria-label="Peer to peer three node mesh">
+    <defs><marker id="p2arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <!-- three nodes -->
+    <rect x="390" y="50"  width="180" height="80" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="480" y="83" text-anchor="middle">Node A (NYC)</text>
+    <text class="svg-label-xs" x="480" y="101" text-anchor="middle">originator_id = 1 · owns region US</text>
+
+    <rect x="120" y="280" width="180" height="80" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="210" y="313" text-anchor="middle">Node B (LON)</text>
+    <text class="svg-label-xs" x="210" y="331" text-anchor="middle">originator_id = 2 · owns region EU</text>
+
+    <rect x="660" y="280" width="180" height="80" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="750" y="313" text-anchor="middle">Node C (SYD)</text>
+    <text class="svg-label-xs" x="750" y="331" text-anchor="middle">originator_id = 3 · owns region APAC</text>
+
+    <!-- edges both ways -->
+    <path class="svg-edge" d="M405,130 L245,278" marker-end="url(#p2arw)" marker-start="url(#p2arw)"/>
+    <path class="svg-edge" d="M555,130 L715,278" marker-end="url(#p2arw)" marker-start="url(#p2arw)"/>
+    <path class="svg-edge" d="M300,320 H657" marker-end="url(#p2arw)" marker-start="url(#p2arw)"/>
+
+    <path d="M405,130 L245,278" fill="none" stroke="none" data-flow data-start="0"   data-travel="1.3" data-dots="2" data-gap="0.5" data-color="var(--pub)"/>
+    <path d="M245,278 L405,130" fill="none" stroke="none" data-flow data-start="1.5" data-travel="1.3" data-dots="2" data-gap="0.5" data-color="var(--sub)"/>
+    <path d="M555,130 L715,278" fill="none" stroke="none" data-flow data-start="3"   data-travel="1.3" data-dots="2" data-gap="0.5" data-color="var(--pub)"/>
+    <path d="M715,278 L555,130" fill="none" stroke="none" data-flow data-start="4.5" data-travel="1.3" data-dots="2" data-gap="0.5" data-color="var(--sub)"/>
+    <path d="M300,320 H660"     fill="none" stroke="none" data-flow data-start="6"   data-travel="1.4" data-dots="2" data-gap="0.5" data-color="var(--dist)"/>
+    <path d="M660,320 H300"     fill="none" stroke="none" data-flow data-start="7.5" data-travel="1.4" data-dots="2" data-gap="0.5" data-color="var(--dist)"/>
+
+    <text class="svg-label-xs" x="480" y="395" text-anchor="middle">each node runs its own Log Reader + Distribution Agents; each pair of arrows is a full transactional pipeline</text>
+
+    <g class="risk-marker" data-risk="p2p-conflicts"    transform="translate(480,222)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="dist-db-growth"   transform="translate(390,52)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span>Every peer is Publisher + Subscriber + (usually) its own Distributor.</span>
+  </div>
+</div>
+
+<h2>How it differs from standard transactional</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th></th><th>Standard transactional</th><th>Peer-to-peer</th></tr></thead>
+  <tbody>
+    <tr><td>Topology</td><td>Hierarchy: one publisher → N subscribers</td><td>Mesh of equal peers, all read-write</td></tr>
+    <tr><td>Who may write</td><td>Publisher only (by contract)</td><td>Any node — for <em>disjoint</em> rows</td></tr>
+    <tr><td>Loop prevention</td><td>n/a</td><td>Every transaction carries an <code>originator_id</code>; peers skip changes that originated from themselves</td></tr>
+    <tr><td>Conflicts</td><td>Impossible by design</td><td><em>Detected</em> (hidden hash column per row) but <strong>not resolved</strong> — error 22815 stops the agents</td></tr>
+    <tr><td>Snapshot init</td><td>Snapshot Agent</td><td>No snapshots: initialize peers from backup/sync'd copy</td></tr>
+    <tr><td>Edition</td><td>Any paid edition</td><td>Enterprise only</td></tr>
+    <tr><td>Schema changes</td><td>Mostly online</td><td>Adding/removing nodes & some DDL require a quiesced (write-paused, fully-synced) topology</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Conflict detection in depth</h2>
+<p>
+  With <code>@p2p_conflictdetection = 'true'</code> (default when created via the wizard), every row carries a hidden
+  <code>$sys_p2p_cd_id</code> column encoding the originator and version. On apply, the receiving peer compares versions:
+  a mismatch means two peers changed the row independently → <strong>error 22815</strong>, agent stops (default
+  <code>@p2p_continue_onconflict = 'false'</code>).
+</p>
+<div class="callout danger">
+  <div class="co-title">🛑 Do not be tempted by @p2p_continue_onconflict = 'true'</div>
+  <p>It lets the highest-originator-id win and keeps going — which means <strong>silent divergence</strong> whenever your
+  write partitioning is broken. The stop-on-conflict default is annoying but honest: it tells you the application wrote
+  the same row in two places. Fix the partitioning; don't mute the detector. Microsoft's own guidance is to treat
+  continue-on-conflict as a temporary measure while you repair the topology.</p>
+</div>
+
+<h2>Operational rules</h2>
+<ul>
+  <li><strong>Partition writes.</strong> Each row (customer, region, tenant…) must have exactly one home node. Enforce in the app layer or with CHECK constraints per node.</li>
+  <li><strong>Quiesce for topology changes:</strong> stop writes everywhere, let all queues drain (verify with tracer-like marker rows), then add/remove nodes or alter schema via <code>sp_addpublication</code>/wizard.</li>
+  <li><strong>Restoring one peer</strong> = initialize it from a current peer's backup, then <code>sp_addsubscription</code> with <code>@sync_type = 'replication support only'</code> / initialize-with-backup patterns.</li>
+  <li><strong>Monitor every edge.</strong> A 3-node mesh has 6 one-way pipelines; one lagging edge breaks the "everyone is current" assumption. Tracer tokens work per publication edge.</li>
+</ul>
+
+<h2>Minimal creation script (per node)</h2>
+<pre data-label="T-SQL — P2P publication"><code class="sql">-- on each peer, after distributor setup and identical schema/data:
+EXEC sp_replicationdboption @dbname = N'SalesDB', @optname = N'publish', @value = N'true';
+
+EXEC sp_addpublication
+     @publication = N'P2P_Sales',
+     @publication_type = N'transactional',
+     @allow_push = N'true',
+     @enabled_for_p2p = N'true',                -- the switch that makes it P2P
+     @p2p_conflictdetection = N'true',
+     @p2p_originator_id = 1,                    -- unique per peer!
+     @status = N'active';
+
+EXEC sp_addarticle @publication = N'P2P_Sales',
+     @article = N'Orders', @source_owner = N'dbo', @source_object = N'Orders';
+
+-- then, per remote peer:
+EXEC sp_addsubscription
+     @publication = N'P2P_Sales',
+     @subscriber = N'LON01', @destination_db = N'SalesDB',
+     @subscription_type = N'Push',
+     @sync_type = N'replication support only';  -- data already in place
+</code></pre>
+
+<h2>When to recommend P2P vs alternatives</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Need</th><th>Recommend</th></tr></thead>
+  <tbody>
+    <tr><td>Read scale-out, writes only at one site</td><td>Standard transactional (or AG readable secondaries)</td></tr>
+    <tr><td>Multi-site writes, clean geographic row ownership, low latency links</td><td>Peer-to-peer</td></tr>
+    <tr><td>Multi-site writes with genuine same-row contention</td><td>Merge (has resolvers) or application-level redesign</td></tr>
+    <tr><td>HA/DR for a whole database</td><td>Always On AG — not replication</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Create the Publication</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="setup/create-publication">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Setup<span class="sep">›</span>Create Publication</nav>
+<header class="page-header">
+  <h1>Step 2 — Create the Publication</h1>
+  <p class="lead">
+    Defines <em>what</em> replicates. Affects: <span class="badge pub">Publisher</span> (enables the DB for publishing,
+    creates publication + articles, starts marking the log) and <span class="badge agent">Agents</span>
+    (creates the Log Reader and Snapshot Agent jobs).
+  </p>
+</header>
+
+<h2>Option A — SSMS wizard (New Publication)</h2>
+<ol class="steps">
+  <li><strong>Connect to the publisher</strong> → <em>Replication</em> → <em>Local Publications</em> → right-click → <em>New Publication…</em></li>
+  <li><strong>Publication Database:</strong> pick the source DB. The wizard silently runs <code>sp_replicationdboption 'publish'</code> on finish — from that moment the log starts retaining replicated records.</li>
+  <li><strong>Publication Type:</strong> Snapshot / Transactional / <span style="color:var(--text-muted)">(Transactional with updatable — deprecated)</span> / Merge / Peer-to-Peer. This choice is permanent per publication.</li>
+  <li><strong>Articles:</strong> tick tables (PK-less tables are greyed out for transactional), procs, views. Per-article <em>Article Properties</em> → set <code>@pre_creation_cmd</code>, copy indexes/triggers options, destination name/schema overrides.</li>
+  <li><strong>Filter Table Rows:</strong> add static row filters (transactional) or parameterized/join filters (merge).</li>
+  <li><strong>Snapshot Agent page:</strong> "Create a snapshot immediately" and/or schedule. For big tables at busy hours, untick "immediately" and run it off-hours instead.</li>
+  <li><strong>Agent Security:</strong> set the Snapshot Agent and Log Reader Agent accounts (see <a href="prerequisites.html">prerequisites</a> §3). Avoid "Run under the SQL Server Agent service account" in production.</li>
+  <li><strong>Finish</strong> with a name — and generate the script for source control.</li>
+</ol>
+
+<h2>Option B — pure T-SQL (transactional example)</h2>
+<pre data-label="T-SQL — run at the publisher"><code class="sql">USE master;
+-- 1. enable the database for transactional publishing (idempotent)
+EXEC sp_replicationdboption @dbname = N'SalesDB', @optname = N'publish', @value = N'true';
+-- merge would be: @optname = N'merge publish'
+
+USE SalesDB;
+-- 2. the Log Reader Agent job for this DB (wizard does this implicitly)
+EXEC sp_addlogreader_agent
+     @job_login = N'DOMAIN\replLogReader', @job_password = N'***',
+     @publisher_security_mode = 1;     -- Windows auth back to the publisher
+
+-- 3. the publication
+EXEC sp_addpublication
+     @publication = N'SalesPub',
+     @publication_type   = N'transactional',  -- implied by repl_freq below in older scripts
+     @repl_freq          = N'continuous',
+     @sync_method        = N'concurrent',     -- concurrent snapshot: minimal locks
+     @retention          = 336,               -- subscription expiry (hours)
+     @allow_push = N'true', @allow_pull = N'true',
+     @independent_agent  = N'true',
+     @immediate_sync     = N'false',          -- see note below!
+     @status             = N'active';
+
+-- 4. its snapshot agent job
+EXEC sp_addpublication_snapshot
+     @publication = N'SalesPub',
+     @job_login = N'DOMAIN\replSnapshot', @job_password = N'***',
+     @publisher_security_mode = 1;
+
+-- 5. articles
+EXEC sp_addarticle
+     @publication = N'SalesPub',
+     @article = N'Orders',
+     @source_owner = N'dbo', @source_object = N'Orders',
+     @type = N'logbased',
+     @pre_creation_cmd = N'drop',
+     @schema_option = 0x000000000803509F,     -- common default: PK, indexes, defaults...
+     @ins_cmd = N'CALL sp_MSins_dboOrders',
+     @upd_cmd = N'SCALL sp_MSupd_dboOrders',
+     @del_cmd = N'CALL sp_MSdel_dboOrders';
+
+-- optional row filter
+EXEC sp_articlefilter
+     @publication = N'SalesPub', @article = N'Orders',
+     @filter_name = N'FLT_Orders_EU',
+     @filter_clause = N'Region = N''EU''';
+EXEC sp_articleview
+     @publication = N'SalesPub', @article = N'Orders',
+     @view_name = N'VW_Orders_EU',
+     @filter_clause = N'Region = N''EU''';
+</code></pre>
+
+<div class="callout warn">
+  <div class="co-title">⚠ @immediate_sync — small flag, big consequences</div>
+  <p><code>@immediate_sync = 'true'</code> (the wizard's default!) keeps a full snapshot and <em>all</em> commands for the
+  entire retention period so that new subscribers can join without a fresh snapshot. That convenience makes the
+  distribution database retain commands for <strong>336 hours instead of until-delivered</strong> — the single most common
+  cause of "why is my distribution DB huge?". For most topologies set it (and <code>@allow_anonymous</code>) to
+  <code>'false'</code> and generate snapshots on demand when subscribers join.</p>
+</div>
+
+<h2>Verify</h2>
+<pre data-label="T-SQL — verification"><code class="sql">EXEC sp_helppublication @publication = N'SalesPub';
+EXEC sp_helparticle    @publication = N'SalesPub';
+
+-- jobs created (at the distributor for push topology)
+SELECT j.name, c.name AS category
+FROM msdb.dbo.sysjobs j JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+WHERE c.name IN ('REPL-LogReader','REPL-Snapshot');
+
+-- log reader connected and scanning?
+EXEC sp_replcounters;   -- returns a row per published DB once the log reader has run
+</code></pre>
+
+<h2>Generating the first snapshot</h2>
+<pre data-label="T-SQL"><code class="sql">EXEC sp_startpublication_snapshot @publication = N'SalesPub';
+-- watch it:
+SELECT TOP 5 * FROM distribution.dbo.MSsnapshot_history ORDER BY time DESC;
+</code></pre>
+<ul>
+  <li>Watch duration and the snapshot folder filling with a dated subfolder per run.</li>
+  <li>Concurrent snapshots (transactional default) only hold schema locks briefly at start/end — but the BCP reads still cost IO; prefer off-hours for the first big one.</li>
+</ul>
+
+<h2>Publication-level settings worth knowing later</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Setting (sp_changepublication)</th><th>Why support touches it</th></tr></thead>
+  <tbody>
+    <tr><td><code>retention</code></td><td>Lengthen before planned subscriber outages to avoid expiry/reinit</td></tr>
+    <tr><td><code>allow_initialize_from_backup</code></td><td>Enables no-snapshot initialization for very large DBs</td></tr>
+    <tr><td><code>replicate_ddl</code></td><td>1 = ALTERs flow to subscribers (default); 0 = schema frozen</td></tr>
+    <tr><td><code>allow_anonymous</code> / <code>immediate_sync</code></td><td>The distribution-DB-bloat pair — see callout above</td></tr>
+    <tr><td><code>status</code> (active/inactive)</td><td>Inactive publications accept no new subscriptions</td></tr>
+  </tbody>
+</table></div>
+
+<p>Next: <a href="create-subscription.html">Step 3 — Create the Subscription</a>.</p>
+
+</main>
+</div>
+</body>
+</html>

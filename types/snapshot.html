@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snapshot Replication</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="types/snapshot">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Types<span class="sep">›</span>Snapshot</nav>
+<header class="page-header">
+  <h1>Snapshot Replication</h1>
+  <p class="lead">
+    The simplest type: copy <strong>everything, every time</strong>. No change tracking at all — the Snapshot
+    Agent exports all articles in full, and the Distribution Agent replaces the subscriber's copy wholesale.
+    It is also the <strong>initialization mechanism</strong> for every other replication type.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="10" viewBox="0 0 960 300" role="img" aria-label="Snapshot replication flow">
+    <defs><marker id="tarw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <path d="M40,100 a55,13 0 1,0 110,0 a55,13 0 1,0 -110,0 M40,100 v45 a55,13 0 0,0 110,0 v-45" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label-sm" x="95" y="128" text-anchor="middle">Publication DB</text>
+    <text class="svg-label-xs" x="95" y="185" text-anchor="middle">shared locks while</text>
+    <text class="svg-label-xs" x="95" y="199" text-anchor="middle">BCP runs</text>
+
+    <rect x="250" y="85" width="170" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="335" y="110" text-anchor="middle">Snapshot Agent</text>
+    <text class="svg-label-xs" x="335" y="127" text-anchor="middle">runs on schedule</text>
+
+    <path d="M500,87 h35 l10,10 h85 v48 h-130 z" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="565" y="116" text-anchor="middle">Snapshot folder</text>
+    <text class="svg-label-xs" x="565" y="131" text-anchor="middle">full .bcp set per run</text>
+
+    <rect x="700" y="85" width="170" height="60" rx="8" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.8"/>
+    <text class="svg-label" x="785" y="110" text-anchor="middle">Distribution Agent</text>
+    <text class="svg-label-xs" x="785" y="127" text-anchor="middle">drop → recreate → bulk insert</text>
+
+    <path d="M700,230 a55,13 0 1,0 110,0 a55,13 0 1,0 -110,0 M700,230 v40 a55,13 0 0,0 110,0 v-40" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.8"/>
+    <text class="svg-label-sm" x="755" y="255" text-anchor="middle">Subscription DB</text>
+
+    <path class="svg-edge" d="M150,115 H247" marker-end="url(#tarw)"/>
+    <path class="svg-edge" d="M420,115 H497" marker-end="url(#tarw)"/>
+    <path class="svg-edge" d="M630,115 H697" marker-end="url(#tarw)"/>
+    <path class="svg-edge" d="M785,145 V215" marker-end="url(#tarw)"/>
+
+    <path d="M150,115 H250" fill="none" stroke="none" data-flow data-start="0"   data-travel="1.2" data-dots="3" data-gap="0.4" data-color="var(--pub)"/>
+    <path d="M420,115 H500" fill="none" stroke="none" data-flow data-start="1.3" data-travel="1.0" data-dots="3" data-gap="0.4" data-color="var(--agent)" data-shape="cmd"/>
+    <path d="M630,115 H700" fill="none" stroke="none" data-flow data-start="2.4" data-travel="0.9" data-dots="3" data-gap="0.4" data-color="var(--agent)" data-shape="cmd"/>
+    <path d="M785,145 V218" fill="none" stroke="none" data-flow data-start="3.4" data-travel="1.0" data-dots="3" data-gap="0.4" data-color="var(--dist)"/>
+
+    <g class="risk-marker" data-risk="init-snapshot-locks"  transform="translate(150,88)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-disk-space"  transform="translate(500,84)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="snapshot-share-perms" transform="translate(630,84)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span>No Log Reader, no change tracking — the whole publication ships on every scheduled run.</span>
+  </div>
+</div>
+
+<h2>When snapshot is the right answer</h2>
+<ul>
+  <li>Data changes <strong>rarely</strong> or is refreshed wholesale anyway (price lists, reference/lookup tables, nightly-rebuilt dimensions).</li>
+  <li>It is <strong>acceptable for the subscriber copy to be stale</strong> between runs, and the total volume is small enough to copy in the window.</li>
+  <li>You want <strong>zero publisher-side overhead between runs</strong> — snapshot adds no triggers, no log marking, nothing continuous.</li>
+  <li>Large churn case: if 80% of rows change daily, shipping a snapshot nightly can be <em>cheaper</em> than replicating every change transactionally.</li>
+</ul>
+
+<h2>Mechanics in detail</h2>
+<ol class="steps">
+  <li><strong>Snapshot Agent runs</strong> (scheduled or manual). It writes per-article schema scripts (<code>.sch</code>), constraint/index scripts (<code>.dri</code>/<code>.idx</code>), and BCP data files (<code>.bcp</code>) into a dated subfolder of the snapshot folder. For snapshot publications it holds shared locks on all articles for the duration of generation.</li>
+  <li><strong>Commands are queued.</strong> A small set of commands pointing at the snapshot files goes into the distribution database.</li>
+  <li><strong>Distribution Agent applies</strong>: per <code>@pre_creation_cmd</code> it drops (default), truncates, deletes from, or leaves the destination tables, re-creates schema, bulk-inserts the BCP files, then applies indexes/constraints.</li>
+  <li><strong>Until the next run, nothing happens</strong> — changes at the publisher are invisible to the subscriber.</li>
+</ol>
+
+<div class="callout warn">
+  <div class="co-title">⚠ Subscriber tables vanish during apply</div>
+  <p>With the default <code>drop</code> pre-creation command, the subscriber's tables are dropped and rebuilt during
+  snapshot delivery. Queries running at that moment fail with "object does not exist"; subscriber-side extra indexes
+  and triggers are lost unless scripted into post-snapshot scripts (<code>@post_snapshot_script</code>). Schedule
+  applies off-hours and document any subscriber-side additions.</p>
+</div>
+
+<h2>Minimal setup (T-SQL)</h2>
+<pre data-label="T-SQL — snapshot publication"><code class="sql">-- at the publisher (distributor already configured)
+USE SalesDB;
+EXEC sp_replicationdboption @dbname = N'SalesDB', @optname = N'publish', @value = N'true';
+
+EXEC sp_addpublication
+     @publication = N'RefDataPub',
+     @publication_type = N'snapshot',    -- the only difference vs transactional here
+     @sync_method = N'native',
+     @repl_freq = N'snapshot',
+     @status = N'active';
+
+EXEC sp_addpublication_snapshot
+     @publication = N'RefDataPub',
+     @frequency_type = 4, @frequency_interval = 1,       -- daily
+     @active_start_time = 10000;                          -- 01:00:00
+
+EXEC sp_addarticle @publication = N'RefDataPub',
+     @article = N'PriceList', @source_owner = N'dbo', @source_object = N'PriceList';
+
+EXEC sp_addsubscription @publication = N'RefDataPub',
+     @subscriber = N'SUB01', @destination_db = N'SalesReporting',
+     @subscription_type = N'Push', @sync_type = N'automatic';
+</code></pre>
+
+<h2>Monitoring a snapshot topology</h2>
+<ul>
+  <li>Watch the <strong>Snapshot Agent job duration</strong> trend — growth means the publication outgrew the pattern.</li>
+  <li>Alert on snapshot job <strong>failure</strong> (disk, locks) and on the Distribution Agent failing to apply (perms, broken schema prerequisites).</li>
+  <li>Latency monitoring (tracer tokens) does not apply — "latency" is simply time since the last successful run: check <code>MSsnapshot_history</code> and <code>MSdistribution_history</code> at the distributor.</li>
+</ul>
+
+<h2>Role in other replication types</h2>
+<p>
+  Even in transactional and merge replication, the Snapshot Agent produces the <strong>initial state</strong>.
+  That makes its risk points (folder permissions, disk space, locks) relevant to <em>every</em> topology — a broken
+  snapshot pipeline is why "reinitialize" sometimes fails as a recovery step. Alternatives for very large databases:
+  <em>initialize from backup</em> (<code>@sync_type = 'initialize with backup'</code>) or manual schema+data load with
+  <code>@sync_type = 'replication support only'</code>.
+</p>
+
+</main>
+</div>
+</body>
+</html>

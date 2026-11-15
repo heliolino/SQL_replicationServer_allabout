@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQL Server Replication — Field Guide</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/animations.css">
+<script defer src="js/main.js"></script>
+<script defer src="js/animations.js"></script>
+</head>
+<body data-root="" data-page="index">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<header class="page-header">
+  <h1>SQL Server Replication — Support Engineer Field Guide</h1>
+  <p class="lead">
+    A complete local reference for SQL Server replication: how every component works (with animated
+    diagrams), how to install and configure a topology step by step, how to monitor it in production,
+    every relevant command mapped to the component it affects — and the <strong>⚠ risk points</strong>
+    a support engineer must watch. Click any pulsing ⚠ marker on a diagram to see what can go wrong,
+    how to detect it, and what to do first.
+  </p>
+</header>
+
+<h2>What is replication?</h2>
+<p>
+  SQL Server replication is a set of technologies for <strong>copying and distributing data and database
+  objects</strong> from one database to another and keeping them synchronized. Unlike backup/restore it is
+  continuous and granular: you publish individual tables (or subsets of rows and columns), and changes flow
+  automatically to one or many destination servers.
+</p>
+<p>It is built around a publishing-industry metaphor with three server roles:</p>
+<ul>
+  <li><span class="badge pub">Publisher</span> — the source server. It makes data available as <em>publications</em> composed of <em>articles</em> (tables, views, procedures).</li>
+  <li><span class="badge dist">Distributor</span> — the middleman. It stores replication metadata and, for transactional replication, queues every change in its <code>distribution</code> database until all subscribers have received it.</li>
+  <li><span class="badge sub">Subscriber</span> — the destination server(s). Each holds a <em>subscription</em> to a publication, delivered by <span class="badge agent">Agents</span> as either <em>push</em> (agent runs at the distributor) or <em>pull</em> (agent runs at the subscriber).</li>
+</ul>
+
+<div class="diagram">
+  <svg data-animate data-cycle="12" viewBox="0 0 1100 420" role="img" aria-label="High-level replication topology: Publisher, Distributor, Subscriber">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/>
+      </marker>
+    </defs>
+
+    <!-- Publisher -->
+    <rect class="svg-node svg-node-pub" x="60" y="130" width="240" height="160" rx="12"/>
+    <text class="svg-title" x="180" y="165" text-anchor="middle">PUBLISHER</text>
+    <path d="M110,205 a45,14 0 1,0 140,0 a45,14 0 1,0 -140,0 M110,205 v46 a45,14 0 0,0 140,0 v-46" fill="var(--surface)" stroke="var(--pub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="180" y="237" text-anchor="middle">Publication DB</text>
+    <text class="svg-label-xs" x="180" y="251" text-anchor="middle">publications · articles</text>
+
+    <!-- Distributor -->
+    <rect class="svg-node svg-node-dist" x="430" y="130" width="240" height="160" rx="12"/>
+    <text class="svg-title" x="550" y="165" text-anchor="middle">DISTRIBUTOR</text>
+    <path d="M480,205 a45,14 0 1,0 140,0 a45,14 0 1,0 -140,0 M480,205 v46 a45,14 0 0,0 140,0 v-46" fill="var(--surface)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="550" y="237" text-anchor="middle">distribution DB</text>
+    <text class="svg-label-xs" x="550" y="251" text-anchor="middle">store &amp; forward queue</text>
+
+    <!-- Subscribers -->
+    <rect class="svg-node svg-node-sub" x="800" y="60" width="240" height="130" rx="12"/>
+    <text class="svg-title" x="920" y="92" text-anchor="middle">SUBSCRIBER 1</text>
+    <path d="M860,112 a40,12 0 1,0 120,0 a40,12 0 1,0 -120,0 M860,112 v36 a40,12 0 0,0 120,0 v-36" fill="var(--surface)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-xs" x="920" y="183" text-anchor="middle">push subscription</text>
+
+    <rect class="svg-node svg-node-sub" x="800" y="230" width="240" height="130" rx="12"/>
+    <text class="svg-title" x="920" y="262" text-anchor="middle">SUBSCRIBER 2</text>
+    <path d="M860,282 a40,12 0 1,0 120,0 a40,12 0 1,0 -120,0 M860,282 v36 a40,12 0 0,0 120,0 v-36" fill="var(--surface)" stroke="var(--sub)" stroke-width="1.6"/>
+    <text class="svg-label-xs" x="920" y="353" text-anchor="middle">pull subscription</text>
+
+    <!-- visible edges -->
+    <path class="svg-edge" d="M300,210 H430" marker-end="url(#arrow)"/>
+    <text class="svg-label-sm" x="365" y="198" text-anchor="middle">agents harvest</text>
+    <path class="svg-edge" d="M670,195 C730,170 740,135 800,125" marker-end="url(#arrow)"/>
+    <path class="svg-edge" d="M670,225 C730,250 740,285 800,295" marker-end="url(#arrow)"/>
+    <text class="svg-label-sm" x="740" y="105" text-anchor="middle">agents deliver</text>
+
+    <!-- animation paths (invisible) -->
+    <path d="M300,210 H430" fill="none" stroke="none" data-flow data-start="0" data-travel="1.6" data-dots="3" data-gap="0.45" data-color="var(--pub)"/>
+    <path d="M670,195 C730,170 740,135 800,125" fill="none" stroke="none" data-flow data-start="2.2" data-travel="1.6" data-dots="3" data-gap="0.45" data-color="var(--dist)"/>
+    <path d="M670,225 C730,250 740,285 800,295" fill="none" stroke="none" data-flow data-start="2.6" data-travel="1.6" data-dots="3" data-gap="0.45" data-color="var(--dist)"/>
+
+    <!-- risk markers -->
+    <g class="risk-marker" data-risk="log-reader-latency" transform="translate(300,160)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="dist-db-growth" transform="translate(620,180)"><circle r="10"/><text dy="4">⚠</text></g>
+    <g class="risk-marker" data-risk="row-not-found" transform="translate(1040,230)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--pub)"></span>changes harvested from publisher</span>
+    <span><span class="legend-dot" style="background:var(--dist)"></span>changes delivered to subscribers</span>
+    <span>⚠ = click for support-engineer risk notes</span>
+  </div>
+</div>
+
+<h2>Choose your path</h2>
+<div class="card-grid">
+  <a class="card" href="architecture/overview.html"><span class="card-icon">🧩</span><h3>Architecture</h3><p>Every component — Publisher, Distributor, Subscriber, the five agents — with animated mechanics and risk markers.</p></a>
+  <a class="card" href="types/transactional.html"><span class="card-icon">🔁</span><h3>Replication types</h3><p>Snapshot, transactional, merge, and peer-to-peer: how each one actually moves data.</p></a>
+  <a class="card" href="setup/prerequisites.html"><span class="card-icon">🛠️</span><h3>Install &amp; configure</h3><p>Step-by-step: distributor → publication → subscription, in SSMS and pure T-SQL.</p></a>
+  <a class="card" href="monitoring/replication-monitor.html"><span class="card-icon">📈</span><h3>Monitoring</h3><p>Replication Monitor, tracer tokens, latency queries, alerts, and performance tuning.</p></a>
+  <a class="card" href="commands/index.html"><span class="card-icon">⌨️</span><h3>Command matrix</h3><p>Every stored procedure and tool, filterable, mapped to the component it affects.</p></a>
+  <a class="card" href="troubleshooting/risk-areas.html"><span class="card-icon">⚠️</span><h3>Risk areas</h3><p>The consolidated support checklist: every risk marker from every diagram, severity-ranked.</p></a>
+</div>
+
+<h2>The four replication types at a glance</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Type</th><th>How it moves data</th><th>Latency</th><th>Typical use</th><th>Key agents</th></tr></thead>
+  <tbody>
+    <tr><td><a href="types/snapshot.html"><strong>Snapshot</strong></a></td><td>Full copy of all articles, applied as a whole each time</td><td>Scheduled (hours/days)</td><td>Small, rarely-changing lookup data; initializing other types</td><td>Snapshot, Distribution</td></tr>
+    <tr><td><a href="types/transactional.html"><strong>Transactional</strong></a></td><td>Reads committed changes from the transaction log, forwards them in order</td><td>Seconds</td><td>Reporting offload, data distribution, near-real-time copies</td><td>Snapshot, Log Reader, Distribution</td></tr>
+    <tr><td><a href="types/merge.html"><strong>Merge</strong></a></td><td>Triggers track changes at all nodes; agent merges &amp; resolves conflicts</td><td>Per sync session</td><td>Occasionally-connected clients (field devices, branch offices) that also write</td><td>Snapshot, Merge</td></tr>
+    <tr><td><a href="types/peer-to-peer.html"><strong>Peer-to-Peer</strong></a></td><td>Transactional in all directions between equal nodes</td><td>Seconds</td><td>Scale-out of reads with writes partitioned per node (Enterprise Edition)</td><td>Snapshot, Log Reader, Distribution</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Replication vs. the alternatives</h2>
+<p>Support calls often start with "should this even be replication?" — know the boundaries:</p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Technology</th><th>Granularity</th><th>Direction</th><th>Subscriber readable?</th><th>Subscriber writable?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Replication</strong></td><td>Table / row / column subsets</td><td>1→N, N→1, N↔N</td><td>✅ always</td><td>✅ (merge / P2P / updatable)</td><td>Works across versions and editions; schema can differ (indexes, extra tables at subscriber)</td></tr>
+    <tr><td>Always On AG</td><td>Whole database(s)</td><td>1→N replicas</td><td>✅ (readable secondaries, Enterprise)</td><td>❌</td><td>HA/DR technology first; no filtering; same-version replicas</td></tr>
+    <tr><td>Log shipping</td><td>Whole database</td><td>1→N</td><td>⚠ standby (kicks users during restore)</td><td>❌</td><td>Simple, restore-based, minutes-to-hours latency</td></tr>
+    <tr><td>CDC</td><td>Table-level change capture</td><td>capture only</td><td>n/a</td><td>n/a</td><td>Exposes changes in tables; moving them is your ETL's job. Uses the same log-reader mechanics</td></tr>
+    <tr><td>Mirroring (deprecated)</td><td>Whole database</td><td>1→1</td><td>❌ (snapshot only)</td><td>❌</td><td>Replaced by Always On</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout warn">
+  <div class="co-title">⚠ Deprecation status — set expectations correctly</div>
+  <p>Snapshot, transactional, and merge replication remain <strong>fully supported</strong> in SQL Server 2022 and 2025.
+  Only <em>updatable transactional subscriptions</em> (immediate/queued updating) and some Oracle publishing scenarios are deprecated.
+  Azure SQL Database can be a <em>subscriber</em> (push) to transactional/snapshot publications; Azure SQL Managed Instance supports publisher, distributor, and subscriber roles.</p>
+</div>
+
+<h2>How a change travels (transactional replication)</h2>
+<ol class="steps">
+  <li><strong>Application commits a transaction</strong> at the Publisher. Rows in published tables are marked for replication in the transaction log.</li>
+  <li><strong>Log Reader Agent</strong> scans the log, converts committed changes into commands, and writes them to the <code>distribution</code> database (<code>sp_replcmds</code> under the hood). Only then may the log records be truncated.</li>
+  <li><strong>Distribution database queues</strong> the commands in <code>MSrepl_commands</code> / <code>MSrepl_transactions</code> until every subscriber has them (or retention expires).</li>
+  <li><strong>Distribution Agent</strong> reads pending commands and applies them to each Subscriber in commit order, calling auto-generated procedures like <code>sp_MSins_dboTableName</code>.</li>
+  <li><strong>Cleanup jobs</strong> at the Distributor delete delivered commands past the retention window.</li>
+</ol>
+<p>See the full animated pipeline on the <a href="architecture/overview.html">architecture overview</a>.</p>
+
+<h2>The vocabulary you must speak</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Article</strong></td><td>A single replicated object: a table (optionally filtered by rows/columns), view, indexed view, stored procedure, or UDF.</td></tr>
+    <tr><td><strong>Publication</strong></td><td>A named group of articles from one database — the unit a subscriber subscribes to.</td></tr>
+    <tr><td><strong>Subscription</strong></td><td>A request by a subscriber for a publication; push (agent at distributor) or pull (agent at subscriber).</td></tr>
+    <tr><td><strong>Initialization / snapshot</strong></td><td>The initial copy of schema + data that brings a subscriber to the starting state. Re-doing it is <em>reinitialization</em>.</td></tr>
+    <tr><td><strong>Retention</strong></td><td>How long the distributor keeps commands (default max 72 h for distribution retention) and how long a subscription may stay un-synced before expiring (default 336 h).</td></tr>
+    <tr><td><strong>Latency</strong></td><td>Time from commit at publisher to apply at subscriber. Measured precisely with <a href="monitoring/tracer-tokens.html">tracer tokens</a>.</td></tr>
+    <tr><td><strong>Reinitialization</strong></td><td>Marking a subscription to receive a fresh snapshot — the fix of last resort, and the cost you're trying to avoid in most incidents.</td></tr>
+    <tr><td><strong>Agent profile</strong></td><td>A named set of agent parameters (timeouts, batch sizes, error handling) stored at the distributor.</td></tr>
+  </tbody>
+</table></div>
+
+</main>
+</div>
+</body>
+</html>
