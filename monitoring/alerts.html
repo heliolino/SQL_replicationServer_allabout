@@ -23,6 +23,16 @@
   </p>
 </header>
 
+<div class="callout ok">
+  <div class="co-title">☁ On Azure SQL Managed Instance</div>
+  <p>MI runs a full SQL Server Agent, so everything on this page carries over: the canned replication alerts are
+  created on the distributor MI, operators and job-failure notifications work, and the delivery channel is
+  Database Mail — which on MI must first be enabled
+  (<code>sp_configure 'database mail xps', 1</code>) and configured with an external SMTP relay such as
+  SendGrid or your mail gateway. For the scheduled health event feeding these alerts, see the
+  <a href="health-check.html#schedule">health check page</a>.</p>
+</div>
+
 <h2>Layer 1 — the canned replication alerts</h2>
 <p>
   Configuring a distributor pre-creates (disabled) SQL Agent alerts on the distributor. Enable the ones you need,

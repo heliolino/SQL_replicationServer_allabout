@@ -24,6 +24,15 @@
   </p>
 </header>
 
+<div class="callout ok">
+  <div class="co-title">☁ Works against Azure SQL Managed Instance</div>
+  <p>Launch Replication Monitor from SSMS on your workstation and register the distributor MI by its FQDN with a
+  SQL authentication login — the tool reads the same distribution-DB history tables described below, so
+  everything on this page applies. The scripted equivalents (and the MI-friendly
+  <a href="health-check.html">health check sweep</a>) matter even more on MI, where you'll often be querying
+  over a VPN rather than RDP'ing to a server.</p>
+</div>
+
 <h2>Layout tour</h2>
 <div class="diagram">
   <svg viewBox="0 0 960 400" role="img" aria-label="Replication Monitor layout schematic">

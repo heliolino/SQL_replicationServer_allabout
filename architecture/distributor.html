@@ -24,6 +24,15 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ The distributor can be an Azure SQL Managed Instance</div>
+  <p>Everything on this page — the distribution DB, queue tables, history, retention and cleanup jobs — works the
+  same when the distributor is an MI. The one structural difference: the snapshot working directory is not a
+  local disk or file-server share but an <strong>Azure file share in a storage account</strong>, registered with
+  the storage key via <code>sp_adddistpublisher</code>. Disk-space incidents on an MI distributor count against
+  the instance's storage allocation. Setup: <a href="../setup/managed-instance.html">MI-to-MI walkthrough</a>.</p>
+</div>
+
 <div class="diagram">
   <svg data-animate data-cycle="12" viewBox="0 0 960 470" role="img" aria-label="Distribution database internals">
     <defs>

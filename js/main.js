@@ -30,6 +30,7 @@
     ]},
     { head: "Setup & Install", items: [
       { page: "setup/prerequisites",         title: "Prerequisites",          file: "setup/prerequisites.html" },
+      { page: "setup/quick-reference",       title: "⚡ Quick Reference",      file: "setup/quick-reference.html" },
       { page: "setup/configure-distributor", title: "1. Configure Distributor", file: "setup/configure-distributor.html" },
       { page: "setup/create-publication",    title: "2. Create Publication",    file: "setup/create-publication.html" },
       { page: "setup/create-subscription",   title: "3. Create Subscription",   file: "setup/create-subscription.html" },

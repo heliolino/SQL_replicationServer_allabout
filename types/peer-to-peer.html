@@ -24,6 +24,15 @@
   </p>
 </header>
 
+<div class="callout danger">
+  <div class="co-title">☁ Not available on Azure SQL Managed Instance</div>
+  <p>Peer-to-peer topologies are <strong>not supported</strong> on MI (curiously, the
+  <code>initialize from lsn</code> sync type P2P introduced still exists there, and the
+  <a href="../setup/managed-instance.html">MI backup-initialization procedure</a> borrows it). For
+  multi-region writable copies with MI, look at failover groups for HA/DR, or one-way
+  <a href="transactional.html">transactional replication</a> per direction with application-level partitioning.</p>
+</div>
+
 <div class="diagram">
   <svg data-animate data-cycle="10" viewBox="0 0 960 420" role="img" aria-label="Peer to peer three node mesh">
     <defs><marker id="p2arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>

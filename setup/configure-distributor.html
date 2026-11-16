@@ -24,6 +24,16 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ On Azure SQL Managed Instance</div>
+  <p>Same procs, two extra rules: <code>@working_directory</code> must be an <strong>Azure file share in a storage
+  account</strong> (<code>\\acct.file.core.windows.net\share</code> — backslashes only) and
+  <code>sp_adddistpublisher</code> also takes <code>@storage_connection_string</code> with the storage account key.
+  Open outbound TCP 445 to the storage endpoint, use SQL authentication, and keep the distributor MI at a version
+  equal to or above the publisher. Publisher and distributor must be both in Azure or both on-premises — never
+  split. Full walkthrough: <a href="managed-instance.html">MI-to-MI setup</a>.</p>
+</div>
+
 <div class="diagram">
   <svg viewBox="0 0 960 230" role="img" aria-label="What distributor configuration creates">
     <defs><marker id="cdar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>

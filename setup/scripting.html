@@ -24,6 +24,16 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ Adapting this script for Azure SQL Managed Instance</div>
+  <p>The script runs on MI with four substitutions: server names become FQDNs
+  (<code>name.xxx.database.windows.net</code>); <code>@working_directory</code> becomes the storage-account file
+  share plus <code>@storage_connection_string</code> on <code>sp_adddistpublisher</code>; every
+  <code>@job_login</code>/<code>@job_password</code> becomes <code>NULL</code> (managed agent accounts); and all
+  agent connections use SQL authentication logins. Side-by-side MI version:
+  <a href="managed-instance.html">MI-to-MI setup</a>.</p>
+</div>
+
 <h2>Build script</h2>
 <pre data-label="T-SQL — full build (run at PUB01, which is its own distributor)"><code class="sql">/* ================================================================
    SQL Server transactional replication — end-to-end build

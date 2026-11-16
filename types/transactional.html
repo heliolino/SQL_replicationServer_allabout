@@ -24,6 +24,15 @@
   </p>
 </header>
 
+<div class="callout ok">
+  <div class="co-title">☁ Fully supported on Azure SQL Managed Instance</div>
+  <p>An MI can be publisher, distributor, and subscriber for transactional replication (merge and peer-to-peer
+  are not supported there). The pipeline on this page is identical; what changes is the plumbing — storage-account
+  file share for the working directory, SQL-auth agents under managed accounts, and backup-based initialization
+  via PITR because Microsoft owns the MI backup chain. Dedicated walkthrough:
+  <a href="../setup/managed-instance.html">MI-to-MI setup with a separate distributor MI</a>.</p>
+</div>
+
 <div class="diagram">
   <svg data-animate data-cycle="12" viewBox="0 0 960 330" role="img" aria-label="Transactional replication pipeline with LSN ordering">
     <defs><marker id="trarw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>

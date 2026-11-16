@@ -20,6 +20,16 @@
   <p class="lead">The anatomy of a replication agent job, the command-line parameters of each executable, and the job-control commands a support engineer uses daily.</p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ On Azure SQL Managed Instance</div>
+  <p>Jobs and job-control commands are the same, with three deltas: agents run under managed accounts
+  (<code>@job_login = NULL</code> — there is no Windows service account to rotate), credential rotation means
+  changing the <strong>SQL authentication</strong> passwords via the <code>sp_change*_agent</code> procs, and
+  the <code>-Output &lt;file&gt;</code> verbose-logging parameter has no local disk to write to — use the
+  history tables and <code>MSrepl_errors</code> for diagnostics instead.
+  Details: <a href="../setup/managed-instance.html">MI setup page</a>.</p>
+</div>
+
 <h2>Anatomy of an agent job</h2>
 <p>Every agent job has three steps — knowing them explains the job history you read:</p>
 <ol class="steps">

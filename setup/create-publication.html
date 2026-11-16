@@ -24,6 +24,16 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ On Azure SQL Managed Instance</div>
+  <p>The commands are identical, but agent jobs run under Microsoft-managed accounts: pass
+  <code>@job_login = NULL, @job_password = NULL</code> to <code>sp_addlogreader_agent</code> /
+  <code>sp_addpublication_snapshot</code>, and supply a <strong>SQL authentication</strong> login via
+  <code>@publisher_login</code>/<code>@publisher_password</code> instead. Snapshot files land on the Azure file
+  share configured at the distributor, not a local folder. Merge and peer-to-peer publications are not supported
+  on MI. Details: <a href="managed-instance.html">MI-to-MI setup</a>.</p>
+</div>
+
 <h2>Option A — SSMS wizard (New Publication)</h2>
 <ol class="steps">
   <li><strong>Connect to the publisher</strong> → <em>Replication</em> → <em>Local Publications</em> → right-click → <em>New Publication…</em></li>

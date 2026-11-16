@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Quick Reference</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="setup/quick-reference">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Setup &amp; Install<span class="sep">›</span>Quick Reference</nav>
+<header class="page-header">
+  <h1>⚡ Setup quick reference — the whole build, one command per line</h1>
+  <p class="lead">
+    Transactional replication from zero to verified, as a cheat sheet: every command in order, one line on what
+    it does, and a link to the page that explains it properly. Replace names in <code>'quotes'</code>.
+    Before you start: work through the <a href="prerequisites.html">prerequisites checklist</a> once.
+  </p>
+</header>
+
+<h2><span class="badge dist">run at DISTRIBUTOR</span> Phase 1 — configure the distributor</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>EXEC sp_adddistributor @distributor = N'DIST01', @password = N'&lt;link pwd&gt;';</code></td>
+        <td>Declares this instance a distributor and sets the admin link password publishers will use — <a href="configure-distributor.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_adddistributiondb @database = N'distribution';</code></td>
+        <td>Creates the distribution database: the queue, agent history, and error store — <a href="../architecture/distributor.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_adddistpublisher @publisher = N'PUB01', @distribution_db = N'distribution', @working_directory = N'\\DIST01\ReplData';</code></td>
+        <td>Authorizes PUB01 to use this distributor and sets the snapshot folder (must be a UNC share for remote agents) — <a href="configure-distributor.html">details</a></td></tr>
+  </tbody>
+</table></div>
+
+<h2><span class="badge pub">run at PUBLISHER</span> Phase 2 — attach the publisher &amp; enable the database</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>EXEC sp_adddistributor @distributor = N'DIST01', @password = N'&lt;link pwd&gt;';</code></td>
+        <td>Points the publisher at the remote distributor — the password must match phase 1 — <a href="configure-distributor.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_get_distributor;</code></td>
+        <td>Sanity check: <code>installed = 1</code> and the right distributor name before going further — <a href="../troubleshooting/discovery.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_replicationdboption @dbname = N'SalesDB', @optname = N'publish', @value = N'true';</code></td>
+        <td>Marks the database as publishable (creates the replication system objects in it) — <a href="create-publication.html">details</a></td></tr>
+    <tr><td><code>USE SalesDB; EXEC sp_addlogreader_agent @job_login = N'&lt;domain\acct&gt;', @job_password = N'&lt;pwd&gt;';</code></td>
+        <td>Creates the Log Reader Agent job that will harvest committed transactions from the log — <a href="../architecture/agents.html">details</a></td></tr>
+  </tbody>
+</table></div>
+
+<h2><span class="badge pub">run at PUBLISHER</span> Phase 3 — create the publication and add articles</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>EXEC sp_addpublication @publication = N'SalesPub', @repl_freq = N'continuous', @independent_agent = N'true';</code></td>
+        <td>Creates a transactional publication with its own dedicated Distribution Agent — <a href="create-publication.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_addpublication_snapshot @publication = N'SalesPub', @job_login = N'&lt;domain\acct&gt;', @job_password = N'&lt;pwd&gt;';</code></td>
+        <td>Creates the Snapshot Agent job that will generate the initial .bcp/.sch files — <a href="../types/snapshot.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_addarticle @publication = N'SalesPub', @article = N'Orders', @source_owner = N'dbo', @source_object = N'Orders';</code></td>
+        <td>Adds one table to the publication (repeat per table; filters and options here) — <a href="create-publication.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_grant_publication_access @publication = N'SalesPub', @login = N'&lt;agent login&gt;';</code></td>
+        <td>Lets the agent login read the publication — forgetting this is a classic first-run failure — <a href="create-publication.html">details</a></td></tr>
+  </tbody>
+</table></div>
+
+<h2><span class="badge pub">run at PUBLISHER</span> Phase 4 — create the subscription and initialize</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>EXEC sp_addsubscription @publication = N'SalesPub', @subscriber = N'SUB01', @destination_db = N'SalesReporting', @subscription_type = N'Push', @sync_type = N'automatic';</code></td>
+        <td>Registers the subscriber; <code>automatic</code> means the snapshot will initialize it — <a href="create-subscription.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_addpushsubscription_agent @publication = N'SalesPub', @subscriber = N'SUB01', @subscriber_db = N'SalesReporting', @job_login = N'&lt;domain\acct&gt;', @job_password = N'&lt;pwd&gt;';</code></td>
+        <td>Creates the Distribution Agent job that pushes commands to this subscriber — <a href="create-subscription.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_startpublication_snapshot @publication = N'SalesPub';</code></td>
+        <td>Runs the Snapshot Agent now: generates the snapshot the Distribution Agent then applies — <a href="../types/snapshot.html">details</a></td></tr>
+  </tbody>
+</table></div>
+
+<h2><span class="badge agent">run anywhere stated</span> Phase 5 — verify it works</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>EXEC distribution..sp_replmonitorhelpsubscription @publisher = N'PUB01', @publication_type = 0;</code> <span class="badge dist">dist</span></td>
+        <td>Per-subscription status and latency rollup — status 5/6 means retrying/failed — <a href="../monitoring/health-check.html">details</a></td></tr>
+    <tr><td><code>USE SalesDB; EXEC sp_posttracertoken @publication = N'SalesPub';</code> <span class="badge pub">pub</span></td>
+        <td>Injects a latency probe that timestamps each hop of the pipeline — <a href="../monitoring/tracer-tokens.html">details</a></td></tr>
+    <tr><td><code>EXEC sp_replcounters;</code> <span class="badge pub">pub</span></td>
+        <td>Pending transaction count and latency per published database, straight from the publisher — <a href="../monitoring/dmvs-and-tables.html">details</a></td></tr>
+    <tr><td><code>SELECT COUNT(*) FROM dbo.Orders;</code> <span class="badge pub">pub</span> <span class="badge sub">sub</span></td>
+        <td>Row counts on both sides should match once the queue drains — <a href="../monitoring/health-check.html">details</a></td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout warn">
+  <div class="co-title">☁ Doing this on Azure SQL Managed Instance? Four deltas</div>
+  <ul>
+    <li><code>@working_directory</code> must be an <strong>Azure file share in a storage account</strong>
+        (<code>\\acct.file.core.windows.net\share</code>) plus <code>@storage_connection_string</code> with the account key.</li>
+    <li>Agent jobs run under managed accounts: pass <code>@job_login = NULL, @job_password = NULL</code> and use
+        <strong>SQL authentication</strong> logins for the publisher/subscriber connections.</li>
+    <li>Prefer <strong>push</strong> subscriptions; pull isn't supported when the distributor is an MI and the subscriber isn't.</li>
+    <li>Initializing from backup works differently — Microsoft owns the backup chain, so use PITR +
+        <code>initialize from lsn</code> (or <code>COPY_ONLY</code> to URL when TDE allows).</li>
+  </ul>
+  <p>Full MI walkthrough with all commands: <a href="managed-instance.html">MI-to-MI replication with a separate
+  distributor MI</a>.</p>
+</div>
+
+<div class="callout ok">
+  <div class="co-title">✅ Want the same thing as one runnable script?</div>
+  <p>The <a href="scripting.html">full T-SQL script page</a> has this entire build as a single commented,
+  parameterized script, plus the teardown commands.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

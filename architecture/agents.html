@@ -24,6 +24,16 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ Agents on Azure SQL Managed Instance</div>
+  <p>The same five agents exist as the same msdb jobs, but they run <strong>inside the MI under
+  Microsoft-managed accounts</strong>: create them with <code>@job_login = NULL, @job_password = NULL</code> and
+  give them SQL authentication logins for the publisher/distributor/subscriber connections. There is no local
+  file system you control, so the <code>-Output C:\…</code> verbose-log trick isn't available — diagnose from
+  the history tables and <code>MSrepl_errors</code> instead. The Snapshot Agent writes to the Azure file share,
+  not a local folder. Details: <a href="../setup/managed-instance.html">MI-to-MI setup</a>.</p>
+</div>
+
 <div class="callout ok">
   <div class="co-title">✅ Support reflex: find the agent first</div>
   <p>Every replication incident maps to an agent. Jobs live in msdb under categories <code>REPL-Snapshot</code>,

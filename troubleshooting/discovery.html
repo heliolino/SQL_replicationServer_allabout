@@ -27,6 +27,16 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ Mapping a topology that includes Azure SQL Managed Instances</div>
+  <p>Every query on this page works unchanged on MI. Two naming nuances: replication registers MIs by their
+  <strong>FQDN</strong> (<code>name.xxx.database.windows.net</code> — that's what <code>sys.servers</code>,
+  <code>MSsubscriptions</code> and <code>@@SERVERNAME</code> show), and the snapshot working directory you'll
+  find configured is an Azure storage-account file share rather than a server UNC path. MI topology rules that
+  narrow your search: merge and P2P don't exist there, and publisher + distributor are always on the same side
+  (both Azure or both on-prem). Background: <a href="../setup/managed-instance.html">MI setup page</a>.</p>
+</div>
+
 <div class="callout ok">
   <div class="co-title">✅ Where to start when you only have one server name</div>
   <p>Start on whatever server you were given — Step 1 tells you which role(s) it plays. The distributor is the

@@ -24,6 +24,14 @@
   </p>
 </header>
 
+<div class="callout ok">
+  <div class="co-title">☁ This machine also runs on Azure SQL Managed Instance</div>
+  <p>Every component below exists unchanged when publisher, distributor, and subscriber are MIs — transactional
+  and snapshot replication are fully supported there (merge and peer-to-peer are not). The MI-specific plumbing
+  (storage-account file share as working directory, SQL-auth agents, backup initialization via PITR) is covered
+  in the dedicated <a href="../setup/managed-instance.html">Managed Instance setup page</a>.</p>
+</div>
+
 <div class="diagram">
   <svg data-animate data-cycle="14" viewBox="0 0 1100 540" role="img" aria-label="Full transactional replication pipeline with all components">
     <defs>

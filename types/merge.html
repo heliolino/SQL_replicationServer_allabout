@@ -24,6 +24,14 @@
   </p>
 </header>
 
+<div class="callout danger">
+  <div class="co-title">☁ Not available on Azure SQL Managed Instance</div>
+  <p>Merge replication is <strong>not supported</strong> on MI — neither as publisher nor as subscriber. If a
+  topology needs merge semantics in Azure, it needs SQL Server on an Azure VM; for one-way MI scenarios use
+  <a href="transactional.html">transactional replication</a> (<a href="../setup/managed-instance.html">MI
+  setup guide</a>) and move the multi-writer logic into the application.</p>
+</div>
+
 <div class="diagram">
   <svg data-animate data-cycle="12" viewBox="0 0 960 380" role="img" aria-label="Merge replication change tracking and sync">
     <defs><marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>

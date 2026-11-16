@@ -26,6 +26,16 @@
   </p>
 </header>
 
+<div class="callout warn">
+  <div class="co-title">☁ On Azure SQL Managed Instance</div>
+  <p>Default to <strong>push</strong>: pull isn't supported when the distributor is an MI and the subscriber
+  isn't, and push keeps the Distribution Agent next to the queue. Use SQL authentication
+  (<code>@subscriber_security_mode = 0</code>) and <code>@job_login = NULL, @job_password = NULL</code> on
+  <code>sp_addpushsubscription_agent</code>. Initializing from a backup works differently too — Microsoft owns
+  the MI backup chain, so use PITR + <code>initialize from lsn</code> or <code>COPY_ONLY</code> to URL:
+  <a href="managed-instance.html">MI-to-MI setup, step 4</a>.</p>
+</div>
+
 <h2>Decide first: push or pull?</h2>
 <p>This decides where the agent job lives and where you troubleshoot. Comparison table on the <a href="../architecture/subscriber.html">Subscriber page</a>. Default to <strong>push</strong> for a handful of always-on servers, <strong>pull</strong> for many or occasionally-connected subscribers.</p>
 
