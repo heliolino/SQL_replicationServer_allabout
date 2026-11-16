@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Incident Triage Workflow</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="troubleshooting/triage-workflow">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Troubleshooting<span class="sep">›</span>Triage Workflow</nav>
+<header class="page-header">
+  <h1>Incident triage — step by step from symptom to fix</h1>
+  <p class="lead">
+    The complete diagnostic workflow for a replication incident: what to look at, in which order, on which
+    server, and what to do when you find an error. Follow it top to bottom; each branch hands you off to the
+    detailed page for that scenario.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg viewBox="0 0 980 560" role="img" aria-label="Replication triage decision tree">
+    <defs><marker id="twar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <rect x="370" y="20" width="240" height="52" rx="26" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.8"/>
+    <text class="svg-label" x="490" y="42" text-anchor="middle">Replication incident reported</text>
+    <text class="svg-label-xs" x="490" y="59" text-anchor="middle">Step 1: classify the symptom</text>
+
+    <!-- four symptom branches -->
+    <rect x="30"  y="130" width="210" height="60" rx="9" fill="var(--danger-bg)" stroke="var(--danger)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="135" y="155" text-anchor="middle">Agent ERROR / stopped</text>
+    <text class="svg-label-xs" x="135" y="172" text-anchor="middle">red ❌ in Monitor, alert fired</text>
+
+    <rect x="275" y="130" width="210" height="60" rx="9" fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="380" y="155" text-anchor="middle">LATENT / not moving</text>
+    <text class="svg-label-xs" x="380" y="172" text-anchor="middle">no errors, data is old</text>
+
+    <rect x="520" y="130" width="210" height="60" rx="9" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="625" y="155" text-anchor="middle">DATA MISMATCH</text>
+    <text class="svg-label-xs" x="625" y="172" text-anchor="middle">rows differ / missing at subscriber</text>
+
+    <rect x="765" y="130" width="190" height="60" rx="9" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="860" y="155" text-anchor="middle">LOG / DISK growth</text>
+    <text class="svg-label-xs" x="860" y="172" text-anchor="middle">pub log or distribution DB</text>
+
+    <path class="svg-edge" d="M430,72 L135,127" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M470,72 L385,127" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M515,72 L620,127" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M555,72 L855,127" marker-end="url(#twar)"/>
+
+    <!-- actions -->
+    <rect x="30"  y="250" width="210" height="76" rx="9" fill="var(--surface)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-xs" x="135" y="272" text-anchor="middle">Steps 2–4 below:</text>
+    <text class="svg-label-xs" x="135" y="288" text-anchor="middle">find agent → full error text</text>
+    <text class="svg-label-xs" x="135" y="304" text-anchor="middle">→ decode failing command</text>
+    <text class="svg-label-xs" x="135" y="318" text-anchor="middle">→ Common Errors page</text>
+
+    <rect x="275" y="250" width="210" height="76" rx="9" fill="var(--surface)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-xs" x="380" y="272" text-anchor="middle">Three-queue check:</text>
+    <text class="svg-label-xs" x="380" y="288" text-anchor="middle">which watermark is stuck?</text>
+    <text class="svg-label-xs" x="380" y="304" text-anchor="middle">→ “Is it moving?” page</text>
+    <text class="svg-label-xs" x="380" y="318" text-anchor="middle">→ LSN deep dive</text>
+
+    <rect x="520" y="250" width="210" height="76" rx="9" fill="var(--surface)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-xs" x="625" y="272" text-anchor="middle">Is it even published?</text>
+    <text class="svg-label-xs" x="625" y="288" text-anchor="middle">(filters! discovery step 6)</text>
+    <text class="svg-label-xs" x="625" y="304" text-anchor="middle">→ validation / tablediff</text>
+    <text class="svg-label-xs" x="625" y="318" text-anchor="middle">→ repair or reinit</text>
+
+    <rect x="765" y="250" width="190" height="76" rx="9" fill="var(--surface)" stroke="var(--border)" stroke-width="1.4"/>
+    <text class="svg-label-xs" x="860" y="272" text-anchor="middle">log_reuse_wait_desc?</text>
+    <text class="svg-label-xs" x="860" y="288" text-anchor="middle">retention / cleanup state?</text>
+    <text class="svg-label-xs" x="860" y="304" text-anchor="middle">→ Common Errors: log full</text>
+    <text class="svg-label-xs" x="860" y="318" text-anchor="middle">→ Distributor page</text>
+
+    <path class="svg-edge" d="M135,190 V247" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M380,190 V247" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M625,190 V247" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M860,190 V247" marker-end="url(#twar)"/>
+
+    <!-- converge -->
+    <rect x="370" y="390" width="240" height="56" rx="9" fill="var(--ok-bg)" stroke="var(--ok)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="490" y="413" text-anchor="middle">Fix forward (Step 5)</text>
+    <text class="svg-label-xs" x="490" y="430" text-anchor="middle">repair the cause, not the symptom</text>
+    <rect x="370" y="480" width="240" height="56" rx="9" fill="var(--ok-bg)" stroke="var(--ok)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="490" y="503" text-anchor="middle">Verify &amp; document (Step 6)</text>
+    <text class="svg-label-xs" x="490" y="520" text-anchor="middle">tracer token + validation + runbook note</text>
+
+    <path class="svg-edge" d="M135,326 C135,380 300,400 367,412" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M380,326 C380,360 420,380 450,388" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M625,326 C625,360 580,380 545,388" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M860,326 C860,390 680,400 613,412" marker-end="url(#twar)"/>
+    <path class="svg-edge" d="M490,446 V477" marker-end="url(#twar)"/>
+  </svg>
+  <div class="diagram-bar"><span>The four symptom classes and where each one sends you. Details for every box follow below.</span></div>
+</div>
+
+<h2>Step 1 — Classify the symptom (30 seconds)</h2>
+<p>Ask the reporter (or the alert) one question: <em>what is actually wrong?</em></p>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>They say</th><th>Class</th><th>Go to</th></tr></thead>
+  <tbody>
+    <tr><td>"Replication failed / an alert fired / agent red in Monitor"</td><td><strong>Error</strong></td><td>Steps 2–4 below</td></tr>
+    <tr><td>"Subscriber data is stale / reports are behind" (no error visible)</td><td><strong>Latency / stalled</strong></td><td>Step 2, then <a href="is-it-moving.html">Is it moving?</a></td></tr>
+    <tr><td>"Rows are different / missing at the subscriber"</td><td><strong>Data mismatch</strong></td><td>Step 7 below</td></tr>
+    <tr><td>"Disk filling on publisher/distributor" / log growth alert</td><td><strong>Growth</strong></td><td>Step 8 below</td></tr>
+  </tbody>
+</table></div>
+<p>If you don't know the topology yet, run <a href="discovery.html">Topology Discovery</a> first — five minutes spent there prevents fixing the wrong server.</p>
+
+<h2>Step 2 — Take a status snapshot (which agent, which state)</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR"><code class="sql">USE distribution;
+-- status per subscription: 6 = FAILED, 5 = RETRYING, 4 = idle, 3 = running, 2 = succeeded, 1 = started
+EXEC sp_replmonitorhelpsubscription @publisher = N'PUB01', @publication_type = 0;
+
+-- continuous agents that should be running but aren't
+SELECT j.name
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+WHERE c.name IN ('REPL-LogReader','REPL-Distribution') AND j.enabled = 1
+  AND NOT EXISTS (SELECT 1 FROM msdb.dbo.sysjobactivity a
+                  WHERE a.job_id = j.job_id
+                    AND a.start_execution_date IS NOT NULL AND a.stop_execution_date IS NULL);
+</code></pre>
+<ul>
+  <li>Status <strong>6 (failed)</strong> or <strong>5 (retrying)</strong> → you have your agent; go to Step 3.</li>
+  <li>Agent <strong>stopped but no failure</strong> → start it, watch one session complete, then verify flow (<a href="is-it-moving.html">Is it moving?</a>). Find <em>why</em> it was stopped before closing the ticket.</li>
+  <li>Everything "idle / succeeded" but symptom persists → not an agent error; jump to <a href="is-it-moving.html">Is it moving?</a> or Step 7/8 per the symptom class.</li>
+  <li>Pull subscriptions: remember their agent state and history live at the <em>subscriber</em> — this snapshot at the distributor shows less for them.</li>
+</ul>
+
+<h2>Step 3 — Get the FULL error text (not the job history summary)</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR"><code class="sql">USE distribution;
+-- the real error, untruncated, newest first
+SELECT TOP 20 time, source_name,
+       error_text = CONVERT(nvarchar(4000), error_text)
+FROM dbo.MSrepl_errors
+ORDER BY time DESC;
+
+-- the sessions around it (what the agent was doing)
+SELECT TOP 20 h.start_time, h.comments, h.error_id
+FROM dbo.MSdistribution_history h
+JOIN dbo.MSdistribution_agents a ON a.id = h.agent_id
+WHERE a.publication = N'SalesPub'
+ORDER BY h.start_time DESC;
+</code></pre>
+<p>Record three things from the error text: the <strong>error number</strong>, the <strong>server it occurred on</strong>
+(an agent touches up to three servers — the message names the failing side), and any
+<strong><code>xact_seqno</code></strong> / command id mentioned. If job history is all you have and it's truncated,
+rerun the agent with <code>-Output C:\Temp\agent.log -OutputVerboseLevel 2</code> temporarily.</p>
+
+<h2>Step 4 — If there is an error: decode and match it</h2>
+<ol class="steps">
+  <li><strong>Decode the failing command</strong> (when the error references a transaction):
+    <pre data-label="T-SQL"><code class="sql">EXEC distribution.dbo.sp_browsereplcmds
+     @xact_seqno_start = '0x0000002B000001D8000A',   -- from the error text
+     @xact_seqno_end   = '0x0000002B000001D8000A';
+-- output: the exact {CALL sp_MSins_dboOrders(...)} with table + PK values</code></pre>
+    Now you know the table and row involved — half the diagnosis.</li>
+  <li><strong>Match the error number</strong> on the <a href="common-errors.html">Common Errors page</a> — it covers
+    20598 (row not found), 2601/2627 (duplicates), log full, 18456 (logins), 21074 (expired), query timeouts,
+    Log Reader errors, 548 (identity ranges), 22815 (P2P conflict), snapshot OS errors, and schema breakages,
+    each with cause → triage → fix.</li>
+  <li><strong>Not listed?</strong> Search the error number together with the agent name. Before acting on advice,
+    check it against the <a href="risk-areas.html">risk checklist</a> — several popular "fixes" (sp_repldone resets,
+    -SkipErrors, disabling cleanup) are listed there as incident <em>causes</em>.</li>
+  <li><strong>Collect before escalating</strong> (to senior/vendor): topology map, full error text, decoded command,
+    agent history for the last 24 h, queue depths, and the <a href="lsn-deep-dive.html">watermark report</a>.
+    That set answers the first ten questions any escalation will ask.</li>
+</ol>
+
+<h2>Step 5 — Fix forward, with guardrails</h2>
+<ul>
+  <li>Prefer the <strong>smallest true fix</strong>: repair the one subscriber row, fix the one permission, clear the one block — then let the agent continue. The pipeline is ordered; once the head command succeeds, the rest usually drains on its own.</li>
+  <li><strong>Before</strong> any reinitialization, skip, or watermark change, check the <a href="risk-areas.html">risk checklist</a> entry for that action and do the reinit impact math (snapshot time + subscriber app outage).</li>
+  <li>Make <strong>one change at a time</strong> and watch one full agent session after each — replication's retry behavior makes multi-change debugging unreadable.</li>
+</ul>
+
+<h2>Step 6 — Verify and close</h2>
+<ol class="steps">
+  <li><strong>Flow restored:</strong> post a <a href="../monitoring/tracer-tokens.html">tracer token</a>; confirm it arrives within SLA, and the backlog is shrinking (<a href="is-it-moving.html">queue checks</a>).</li>
+  <li><strong>Convergence intact:</strong> if the incident involved skipped commands, manual row repairs, or subscriber-side writes, run <code>sp_publication_validation</code> (or tablediff) on the affected articles.</li>
+  <li><strong>Document:</strong> error number, root cause, fix, and the queries that found it — into the runbook. Next quarter's engineer (possibly you) starts from your note instead of from zero.</li>
+</ol>
+
+<h2>Step 7 — Data mismatch branch (no agent error)</h2>
+<ol class="steps">
+  <li><strong>Confirm the object/rows are supposed to be there:</strong> <a href="discovery.html">Discovery Step 6</a> — is the table an article at all? Does a row filter exclude those rows, or a column filter that column?</li>
+  <li><strong>Check subscription state:</strong> inactive/expired subscription (status 0) means nothing has flowed for a long time — see error 21074 handling.</li>
+  <li><strong>Quantify the drift:</strong> <code>sp_publication_validation @rowcount_only = 2</code>, or <code>tablediff.exe</code> for row-level detail and a generated repair script.</li>
+  <li><strong>Find the writer:</strong> if subscriber rows were modified locally, identify the process (Extended Events audit on the subscriber table) — otherwise the mismatch returns.</li>
+  <li><strong>Repair:</strong> targeted (tablediff fix script) when drift is small; <a href="../commands/subscriber-commands.html">reinitialize</a> when it isn't. Validate afterwards.</li>
+</ol>
+
+<h2>Step 8 — Growth branch (log or distribution DB filling)</h2>
+<ol class="steps">
+  <li><strong>Publisher log growing:</strong> <code>SELECT log_reuse_wait_desc FROM sys.databases WHERE name='SalesDB'</code> → if <code>REPLICATION</code>, the Log Reader is behind or orphaned → <a href="common-errors.html#elogfull">log-full runbook</a>, and <a href="lsn-deep-dive.html">LSN deep dive</a> to see exactly where it's stuck.</li>
+  <li><strong>Distribution DB growing:</strong> which subscription holds retention back? (<code>sp_replmonitorsubscriptionpendingcmds</code> per subscription; a dead subscriber keeps everything). Check cleanup job history. Risk entries: <em>Distribution database growth</em>, <em>Cleanup blocking</em>, and the <code>immediate_sync</code> trap on the <a href="../setup/create-publication.html">publication page</a>.</li>
+  <li><strong>Snapshot folder growing:</strong> old snapshot subfolders not cleaned → check "Expired subscription clean up" and reinit habits.</li>
+</ol>
+
+<div class="callout ok">
+  <div class="co-title">✅ The troubleshooting path at a glance</div>
+  <p><a href="discovery.html">1 · Discovery</a> (know the topology) →
+     <strong>2 · Triage</strong> (this page) →
+     <a href="is-it-moving.html">3 · Is it moving?</a> (verify flow) →
+     <a href="lsn-deep-dive.html">4 · LSN deep dive</a> (find the exact stuck point) →
+     <a href="common-errors.html">5 · Common errors</a> (match &amp; fix) →
+     <a href="risk-areas.html">6 · Risk checklist</a> (prevent the next one).</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

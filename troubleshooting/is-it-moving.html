@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Is Replication Moving?</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="troubleshooting/is-it-moving">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Troubleshooting<span class="sep">›</span>Is It Moving?</nav>
+<header class="page-header">
+  <h1>Is transactional replication actually moving?</h1>
+  <p class="lead">
+    A <a href="../monitoring/tracer-tokens.html">tracer token</a> is the headline test — but it needs the pipeline
+    to carry it, takes minutes, and tells you nothing about a backlog already queued ahead of it. These are the
+    <strong>six independent checks</strong> that prove (or disprove) movement from metadata alone, each sampled
+    twice a few minutes apart: <em>movement is always a delta, never a single snapshot</em>.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg viewBox="0 0 980 240" role="img" aria-label="The four watermarks along the pipeline">
+    <defs><marker id="imar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+    <rect x="30"  y="70" width="180" height="60" rx="9" fill="var(--pub-soft)"  stroke="var(--pub)"  stroke-width="1.6"/>
+    <text class="svg-label-sm" x="120" y="95"  text-anchor="middle">Publisher log</text>
+    <text class="svg-label-xs" x="120" y="112" text-anchor="middle">① harvest watermark</text>
+    <rect x="285" y="70" width="180" height="60" rx="9" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="375" y="95"  text-anchor="middle">distribution DB</text>
+    <text class="svg-label-xs" x="375" y="112" text-anchor="middle">② newest queued cmd</text>
+    <rect x="540" y="70" width="180" height="60" rx="9" fill="var(--agent-soft)" stroke="var(--agent)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="630" y="95"  text-anchor="middle">Distribution Agent</text>
+    <text class="svg-label-xs" x="630" y="112" text-anchor="middle">③ last delivered batch</text>
+    <rect x="795" y="70" width="160" height="60" rx="9" fill="var(--sub-soft)"  stroke="var(--sub)"  stroke-width="1.6"/>
+    <text class="svg-label-sm" x="875" y="95"  text-anchor="middle">Subscriber</text>
+    <text class="svg-label-xs" x="875" y="112" text-anchor="middle">④ applied bookmark</text>
+    <path class="svg-edge" d="M210,100 H282" marker-end="url(#imar)"/>
+    <path class="svg-edge" d="M465,100 H537" marker-end="url(#imar)"/>
+    <path class="svg-edge" d="M720,100 H792" marker-end="url(#imar)"/>
+    <text class="svg-label-xs" x="490" y="180" text-anchor="middle">Healthy pipeline: all four watermarks advance between two samples.</text>
+    <text class="svg-label-xs" x="490" y="198" text-anchor="middle">The FIRST watermark that stops advancing names the broken stage.</text>
+  </svg>
+  <div class="diagram-bar"><span>The four watermarks checked below — ①②③④ map to checks 1–4.</span></div>
+</div>
+
+<h2>Check 0 — Is there anything to move?</h2>
+<p>A quiet system looks identical to a dead one. Before anything else, confirm change volume exists — or create
+some with a <strong>canary write</strong>:</p>
+<pre data-label="T-SQL — at the PUBLISHER"><code class="sql">-- any committed, not-yet-harvested transactions right now?
+USE SalesDB;
+EXEC sp_repltrans;                -- rows = work waiting for the Log Reader; empty = nothing pending
+
+-- canary: touch a published row (use a known test/heartbeat row, not real data)
+UPDATE dbo.ReplHeartbeat SET last_beat = SYSUTCDATETIME() WHERE id = 1;
+-- then check its arrival at the subscriber (Check 5)
+</code></pre>
+<div class="callout ok">
+  <div class="co-title">✅ Build the heartbeat table once, thank yourself forever</div>
+  <p>A one-row table (<code>id int PK, last_beat datetime2</code>) included as an article, updated by a SQL Agent
+  job every minute at the publisher, turns "is it moving?" into a single query at the subscriber:
+  <code>SELECT DATEDIFF(SECOND, last_beat, SYSUTCDATETIME()) FROM dbo.ReplHeartbeat</code> — a continuous,
+  end-to-end lag gauge that works even when agents lie idle and no users are writing.</p>
+</div>
+
+<h2>Check 1 — Publisher harvest watermark (Log Reader leg)</h2>
+<pre data-label="T-SQL — at the PUBLISHER, run twice ~2 min apart"><code class="sql">EXEC sp_replcounters;
+-- watch three columns between samples:
+--   replicated transactions = backlog waiting for the Log Reader  (should shrink or stay ~0)
+--   replication rate trans/sec = harvest throughput               (should be > 0 under load)
+--   replnextlsn = next LSN the Log Reader will read               (MUST advance if backlog > 0)
+</code></pre>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Between two samples…</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td>backlog ≈ 0, rate ≈ 0, <code>replnextlsn</code> static</td><td>✅ Nothing to harvest — quiet, not stuck (confirm with canary)</td></tr>
+    <tr><td>backlog &gt; 0 and shrinking, <code>replnextlsn</code> advancing</td><td>✅ Harvesting — catch-up in progress</td></tr>
+    <tr><td>backlog &gt; 0 and flat/growing, <code>replnextlsn</code> static</td><td>❌ <strong>Log Reader stuck</strong> → its job state &amp; history, then <a href="lsn-deep-dive.html">LSN deep dive</a></td></tr>
+  </tbody>
+</table></div>
+
+<h2>Check 2 — Distribution queue intake (newest queued command)</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR, run twice"><code class="sql">USE distribution;
+SELECT newest_queued_seqno = MAX(xact_seqno),
+       newest_entry_time   = MAX(entry_time),
+       queued_txns         = COUNT(*)
+FROM dbo.MSrepl_transactions WITH (NOLOCK)
+WHERE publisher_database_id = 1;    -- see sp_helpdistpublisher / MSpublisher_databases
+</code></pre>
+<ul>
+  <li><code>newest_entry_time</code> advancing → Log Reader is <em>writing</em> into the queue (leg 1 confirmed end-to-end).</li>
+  <li>Static while the publisher has backlog → the Log Reader can read but not write: distributor full/blocked, connectivity, or agent down — check its history.</li>
+</ul>
+
+<h2>Check 3 — Delivery watermark (Distribution Agent leg, per subscription)</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR, run twice"><code class="sql">USE distribution;
+SELECT a.name,
+       last_delivered_seqno = h.xact_seqno,
+       h.delivered_commands, h.current_delivery_rate, h.comments, h.time
+FROM dbo.MSdistribution_agents a
+CROSS APPLY (SELECT TOP 1 * FROM dbo.MSdistribution_history h
+             WHERE h.agent_id = a.id ORDER BY h.timestamp DESC) h
+WHERE a.subscriber_db <> 'virtual'
+ORDER BY a.name;
+</code></pre>
+<ul>
+  <li><code>xact_seqno</code> advancing toward Check 2's newest seqno, <code>delivered_commands</code> increasing → ✅ delivering.</li>
+  <li><code>comments</code> stuck on <em>"No replicated transactions are available"</em> while Check 2 shows new queued txns → agent polling the wrong state or filtered publication quirk — verify the subscription's pending commands (next line).</li>
+  <li>Same <code>xact_seqno</code> both samples with pending work → ❌ stuck: retry loop (read <code>MSrepl_errors</code>) or blocked at the subscriber (Check 4).</li>
+  <li>Backlog number itself: <code>sp_replmonitorsubscriptionpendingcmds</code> twice — <strong>shrinking = draining; growing = intake &gt; delivery</strong> (slow, not stopped — go to <a href="../monitoring/performance.html">performance</a>).</li>
+</ul>
+
+<h2>Check 4 — Subscriber applied bookmark</h2>
+<pre data-label="T-SQL — at the SUBSCRIBER, run twice"><code class="sql">-- the subscriber's own record of the last applied transaction
+SELECT publication, transaction_timestamp AS applied_up_to_seqno, [time] AS last_sync
+FROM dbo.MSreplication_subscriptions;
+
+-- is an agent even connected and working right now?
+SELECT s.session_id, s.program_name, r.status, r.command,
+       r.wait_type, r.blocking_session_id
+FROM sys.dm_exec_sessions s
+LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
+WHERE s.program_name LIKE '%distrib%';
+</code></pre>
+<ul>
+  <li><code>transaction_timestamp</code> advancing → ✅ applies are landing (the definitive subscriber-side proof).</li>
+  <li>Agent session present but <code>blocking_session_id &gt; 0</code> → delivery blocked by local workload → risk ⚠ <em>Subscriber blocking</em>.</li>
+  <li>No distrib session at all (push) → the agent isn't reaching this server: network/login — check from the distributor side.</li>
+</ul>
+
+<h2>Check 5 — The canary arrives (end-to-end truth)</h2>
+<pre data-label="T-SQL — at the SUBSCRIBER"><code class="sql">SELECT last_beat,
+       lag_seconds = DATEDIFF(SECOND, last_beat, SYSUTCDATETIME())
+FROM dbo.ReplHeartbeat;
+-- lag ≈ heartbeat interval → flowing; lag growing minute by minute → stalled upstream
+</code></pre>
+<p>This plus a <a href="../monitoring/tracer-tokens.html">tracer token</a> are the two end-to-end proofs; everything
+above tells you <em>which stage</em> to blame when they fail.</p>
+
+<h2>Check 6 — Perfmon counters (live, no queries)</h2>
+<ul>
+  <li><code>SQLServer:Replication Log Reader → Logreader:Delivered Cmds/sec</code> &gt; 0 under load = harvesting.</li>
+  <li><code>SQLServer:Replication Dist. → Dist:Delivered Cmds/sec</code> &gt; 0 = applying. Both at 0 while users write = stalled.</li>
+</ul>
+
+<h2>Reading the results — which stage is broken?</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>①&nbsp;Harvest</th><th>②&nbsp;Intake</th><th>③&nbsp;Delivery</th><th>④&nbsp;Applied</th><th>Diagnosis → next page</th></tr></thead>
+  <tbody>
+    <tr><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>Moving. If users still complain: expectation vs SLA, or wrong subscriber/database being checked</td></tr>
+    <tr><td>❌</td><td>—</td><td>—</td><td>—</td><td>Log Reader stuck → job state/history, then <a href="lsn-deep-dive.html">LSN deep dive</a> to find the pinning transaction</td></tr>
+    <tr><td>✅</td><td>❌</td><td>—</td><td>—</td><td>Log Reader can't write to distributor → distributor health, connectivity, distribution DB full/blocked</td></tr>
+    <tr><td>✅</td><td>✅</td><td>❌</td><td>—</td><td>Distribution Agent stuck → <code>MSrepl_errors</code> (retry loop? → <a href="common-errors.html">common errors</a>), or agent stopped</td></tr>
+    <tr><td>✅</td><td>✅</td><td>✅ slow</td><td>✅ slow</td><td>Moving but outpaced → <a href="../monitoring/performance.html">performance &amp; latency</a> catch-up playbook</td></tr>
+    <tr><td>✅</td><td>✅</td><td>✅</td><td>❌</td><td>Delivery "succeeds" but bookmark frozen → blocked applies at subscriber (Check 4 blocking query), or you're reading a different subscription DB than the agent writes</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout warn">
+  <div class="co-title">⚠ Two sampling pitfalls</div>
+  <ul>
+    <li><strong>One sample proves nothing.</strong> Every check above is a delta. A big queue with a fast drain is healthy; a tiny queue that never changes is dead.</li>
+    <li><strong>"No replicated transactions are available" is good news,</strong> not an error — it's the Distribution Agent's idle message. The matching Log Reader idle message is "No replicated transactions…" in its own history. Idle + empty queues + canary arriving = healthy and quiet.</li>
+  </ul>
+</div>
+
+<p>Found the stuck stage and need the exact transaction holding it? Continue to the
+<a href="lsn-deep-dive.html">LSN deep dive</a>.</p>
+
+</main>
+</div>
+</body>
+</html>

@@ -50,8 +50,12 @@
       { page: "commands/agent-commands",       title: "Agent Jobs & Executables", file: "commands/agent-commands.html" }
     ]},
     { head: "Troubleshooting", items: [
-      { page: "troubleshooting/common-errors", title: "Common Errors",        file: "troubleshooting/common-errors.html" },
-      { page: "troubleshooting/risk-areas",    title: "⚠ Risk Areas Checklist", file: "troubleshooting/risk-areas.html" }
+      { page: "troubleshooting/discovery",       title: "1. Topology Discovery",   file: "troubleshooting/discovery.html" },
+      { page: "troubleshooting/triage-workflow", title: "2. Incident Triage",      file: "troubleshooting/triage-workflow.html" },
+      { page: "troubleshooting/is-it-moving",    title: "3. Is It Moving?",        file: "troubleshooting/is-it-moving.html" },
+      { page: "troubleshooting/lsn-deep-dive",   title: "4. LSN Deep Dive",        file: "troubleshooting/lsn-deep-dive.html" },
+      { page: "troubleshooting/common-errors",   title: "5. Common Errors",        file: "troubleshooting/common-errors.html" },
+      { page: "troubleshooting/risk-areas",      title: "6. ⚠ Risk Checklist",     file: "troubleshooting/risk-areas.html" }
     ]}
   ];
 

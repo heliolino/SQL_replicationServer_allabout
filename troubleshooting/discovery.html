@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Topology Discovery</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="troubleshooting/discovery">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Troubleshooting<span class="sep">›</span>Topology Discovery</nav>
+<header class="page-header">
+  <h1>Topology discovery — mapping an unknown replication environment</h1>
+  <p class="lead">
+    You've been handed a server (or an incident) with no documentation. This page is the step-by-step
+    interrogation: which replication <strong>type</strong> is running, which server is
+    <span class="badge pub">Publisher</span>, <span class="badge dist">Distributor</span>, and
+    <span class="badge sub">Subscriber</span>, what the publications and subscriptions are, and whether
+    the publisher ships <strong>all objects or only a few filtered articles</strong>. Every step is a
+    copy-paste query; run them top to bottom and you'll have the full map in ~10 minutes.
+  </p>
+</header>
+
+<div class="callout ok">
+  <div class="co-title">✅ Where to start when you only have one server name</div>
+  <p>Start on whatever server you were given — Step 1 tells you which role(s) it plays. The distributor is the
+  best vantage point (it sees the whole topology), so as soon as any query reveals the distributor's name,
+  jump there and run Steps 3–5 from it.</p>
+</div>
+
+<h2>Step 1 — What roles does THIS server play?</h2>
+<pre data-label="T-SQL — run on the server you were given"><code class="sql">-- 1a. database-level flags: which databases publish or distribute?
+SELECT name,
+       is_published        AS publishes_tran_or_snap,   -- transactional / snapshot publisher DB
+       is_merge_published  AS publishes_merge,          -- merge publisher DB
+       is_distributor      AS is_distribution_db        -- this DB *is* a distribution DB
+FROM sys.databases
+WHERE database_id > 4
+ORDER BY name;
+
+-- 1b. is this instance configured as (or pointed at) a distributor?
+EXEC sp_get_distributor;
+-- installed = 1              → this instance knows a distributor
+-- "distribution server"      → WHO the distributor is (itself = local distributor)
+-- "distribution db installed"= 1 → the distribution DB lives HERE (this box IS the distributor)
+
+-- 1c. is this server a SUBSCRIBER? (look for subscription metadata in each DB)
+EXEC sp_MSforeachdb N'
+IF OBJECT_ID(''[?].dbo.MSreplication_subscriptions'') IS NOT NULL
+    SELECT DB_NAME = ''?'', publisher, publisher_db, publication, distribution_agent
+    FROM [?].dbo.MSreplication_subscriptions;';
+
+-- 1d. corroborate with the agent jobs present on this instance
+SELECT c.name AS category, COUNT(*) AS jobs
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+WHERE c.name LIKE 'REPL-%'
+GROUP BY c.name;
+-- REPL-LogReader here        → publisher's log is read from here (distributor side)
+-- REPL-Distribution here     → push agents (distributor) or pull agents (subscriber)
+-- REPL-Snapshot / REPL-Merge → snapshot generation / merge sync runs here
+</code></pre>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Finding</th><th>Conclusion</th></tr></thead>
+  <tbody>
+    <tr><td><code>is_published</code> or <code>is_merge_published</code> = 1 on any DB</td><td>This server is a <span class="badge pub">Publisher</span>; those DBs are publication databases</td></tr>
+    <tr><td><code>sp_get_distributor</code> → "distribution db installed" = 1</td><td>This server is the <span class="badge dist">Distributor</span> (a DB named <code>distribution</code> — or similar — exists locally)</td></tr>
+    <tr><td><code>sp_get_distributor</code> → distribution server ≠ @@SERVERNAME</td><td>Remote distributor: note that name, go run Steps 3–5 there</td></tr>
+    <tr><td><code>MSreplication_subscriptions</code> rows in a DB</td><td>This server is a <span class="badge sub">Subscriber</span>; the rows name its publisher &amp; publication</td></tr>
+    <tr><td>Several of the above at once</td><td>Normal — one instance often holds two or three roles (e.g. publisher + local distributor)</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Step 2 — Which replication TYPE is in use?</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR (sees every publication)"><code class="sql">USE distribution;
+SELECT publisher_db,
+       publication,
+       publication_type = CASE publication_type
+                            WHEN 0 THEN 'Transactional'
+                            WHEN 1 THEN 'Snapshot'
+                            WHEN 2 THEN 'Merge'
+                          END,
+       immediate_sync, allow_pull, allow_push, retention
+FROM dbo.MSpublications
+ORDER BY publisher_db, publication;
+</code></pre>
+<pre data-label="T-SQL — at the PUBLISHER (per published database)"><code class="sql">USE SalesDB;   -- each DB with is_published / is_merge_published = 1
+
+-- transactional vs snapshot
+SELECT name AS publication,
+       repl_freq = CASE repl_freq WHEN 0 THEN 'continuous → TRANSACTIONAL'
+                                  WHEN 1 THEN 'scheduled  → SNAPSHOT' END,
+       immediate_sync, enabled_for_p2p = NULL  -- see sp_helppublication for p2p flag
+FROM dbo.syspublications;
+
+-- friendly view incl. the P2P flag:
+EXEC sp_helppublication;   -- column 'enabled_for_p2p' = 1 → PEER-TO-PEER
+
+-- merge publications live in a different catalog:
+SELECT name AS merge_publication, retention, priority = NULL
+FROM dbo.sysmergepublications;
+</code></pre>
+<ul>
+  <li><strong>Transactional:</strong> <code>publication_type = 0</code> / <code>repl_freq = 0</code>, a <code>REPL-LogReader</code> job exists for the DB. Details: <a href="../types/transactional.html">Transactional</a>.</li>
+  <li><strong>Snapshot:</strong> <code>publication_type = 1</code> / <code>repl_freq = 1</code>, <em>no</em> Log Reader job for that DB. Details: <a href="../types/snapshot.html">Snapshot</a>.</li>
+  <li><strong>Merge:</strong> rows in <code>sysmergepublications</code>, articles carry a <code>rowguid</code> column, triggers named <code>MSmerge_ins/upd/del_*</code> on the tables. Details: <a href="../types/merge.html">Merge</a>.</li>
+  <li><strong>Peer-to-peer:</strong> transactional with <code>enabled_for_p2p = 1</code> in <code>sp_helppublication</code> — and the same publication exists on multiple "publishers" that subscribe to each other. Details: <a href="../types/peer-to-peer.html">Peer-to-Peer</a>.</li>
+  <li><strong>Updatable subscriptions (legacy):</strong> a <code>REPL-QueueReader</code> job exists, <code>MSsubscriptions.update_mode</code> &gt; 0 — flag for migration.</li>
+</ul>
+
+<h2>Step 3 — Map all three servers (the full topology)</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR: one row per pipeline"><code class="sql">USE distribution;
+SELECT
+    publisher      = pub_srv.name,
+    p.publisher_db,
+    p.publication,
+    publication_type = CASE p.publication_type
+                         WHEN 0 THEN 'Transactional' WHEN 1 THEN 'Snapshot' WHEN 2 THEN 'Merge' END,
+    subscriber     = sub_srv.name,
+    s.subscriber_db,
+    sub_mode       = CASE s.subscription_type WHEN 0 THEN 'PUSH (agent job at distributor)'
+                                              ELSE 'PULL (agent job at subscriber)' END,
+    sub_status     = CASE s.status WHEN 0 THEN 'INACTIVE (needs reinit!)'
+                                   WHEN 1 THEN 'subscribed' WHEN 2 THEN 'active' END
+FROM dbo.MSpublications p
+JOIN dbo.MSsubscriptions s ON s.publication_id = p.publication_id
+JOIN sys.servers pub_srv   ON pub_srv.server_id = p.publisher_id
+JOIN sys.servers sub_srv   ON sub_srv.server_id = s.subscriber_id
+WHERE s.subscriber_db <> 'virtual'          -- filters out internal anonymous/virtual rows
+GROUP BY pub_srv.name, p.publisher_db, p.publication, p.publication_type,
+         sub_srv.name, s.subscriber_db, s.subscription_type, s.status
+ORDER BY publisher, p.publication, subscriber;
+</code></pre>
+<p>Cross-checks from the other two vantage points (useful when you suspect metadata drift):</p>
+<pre data-label="T-SQL — from publisher / subscriber"><code class="sql">-- at the PUBLISHER: who distributes for me, and who subscribes?
+EXEC sp_helpdistributor;        -- distributor name + distribution DB + snapshot folder
+USE SalesDB;
+EXEC sp_helpsubscription;       -- per article: subscriber, destination db, status
+
+-- at the SUBSCRIBER: who feeds this database?
+SELECT publisher, publisher_db, publication,
+       subscription_type,       -- 0 push, 1 pull, 2 anonymous
+       distribution_agent, time AS last_sync_time
+FROM dbo.MSreplication_subscriptions;
+</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ Draw it before you touch it</div>
+  <p>Sketch the result as boxes and arrows (publisher DB → publication → subscriber DB, with push/pull noted)
+  before changing anything. Replication incidents regularly get worse because someone "fixed" an agent on the
+  wrong leg of a topology they hadn't mapped. The diagram on the <a href="../architecture/overview.html">architecture
+  overview</a> is the template.</p>
+</div>
+
+<h2>Step 4 — Find the publications and what they contain</h2>
+<pre data-label="T-SQL — at the PUBLISHER, in each publication DB"><code class="sql">-- publications with their key options
+EXEC sp_helppublication;
+-- columns worth reading: status (active?), retention (hours),
+-- immediate_sync (distribution DB bloat flag), allow_push/allow_pull, enabled_for_p2p
+
+-- every article of one publication, with destination mapping
+EXEC sp_helparticle @publication = N'SalesPub';
+-- columns: article, source object, destination object/owner,
+-- ins/upd/del commands, pre_creation_cmd, filter (row filter view if any)
+</code></pre>
+
+<h2>Step 5 — Find the subscriptions and their agents</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR"><code class="sql">USE distribution;
+-- subscription → agent job name mapping (what to start/stop/read history for)
+SELECT a.name AS agent_job_name,
+       a.publisher_db, a.publication,
+       a.subscriber_db,
+       local_job = a.local_job          -- 1 = push job in THIS msdb; 0 = pull job at subscriber
+FROM dbo.MSdistribution_agents a
+ORDER BY a.publication, a.subscriber_db;
+
+-- merge equivalent: dbo.MSmerge_agents
+</code></pre>
+<p>For <strong>pull</strong> subscriptions (<code>local_job = 0</code>) the job and its history live in the
+<em>subscriber's</em> msdb — log into the subscriber to control it (see <a href="../architecture/subscriber.html">push vs pull</a>).</p>
+
+<h2>Step 6 — Full database or a few articles? Filters?</h2>
+<pre data-label="T-SQL — at the PUBLISHER, in the publication DB"><code class="sql">-- 6a. published vs NOT-published tables, side by side
+SELECT s.name + N'.' + t.name AS table_name,
+       published = CASE WHEN a.objid IS NOT NULL THEN 'YES (' + a.name + ')' ELSE 'no' END
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+LEFT JOIN dbo.sysarticles a ON a.objid = t.object_id
+WHERE t.is_ms_shipped = 0
+ORDER BY published DESC, table_name;
+-- all YES → effectively whole-database publishing; mixed → selective articles
+
+-- 6b. which articles have ROW filters (horizontal subset)?
+SELECT name AS article, filter_clause
+FROM dbo.sysarticles
+WHERE filter_clause IS NOT NULL AND LEN(filter_clause) > 0;
+
+-- 6c. which articles have COLUMN filters (vertical subset)?
+SELECT a.name AS article,
+       published_cols = COUNT(ac.colid),
+       total_cols     = (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = a.objid)
+FROM dbo.sysarticles a
+JOIN dbo.sysarticlecolumns ac ON ac.artid = a.artid
+GROUP BY a.name, a.objid
+HAVING COUNT(ac.colid) &lt;
+       (SELECT COUNT(*) FROM sys.columns c WHERE c.object_id = a.objid);
+-- rows returned = articles that do NOT ship every column
+
+-- 6d. non-table articles (procs, views, functions)
+SELECT name AS article, type_desc =
+       CASE type WHEN 1 THEN 'log-based table' WHEN 8 THEN 'proc execution'
+                 WHEN 24 THEN 'serializable proc exec' WHEN 32 THEN 'proc schema only'
+                 WHEN 64 THEN 'view schema only' WHEN 128 THEN 'function schema only'
+                 ELSE CONVERT(varchar(10), type) END
+FROM dbo.sysarticles WHERE type &lt;&gt; 1;
+
+-- merge equivalents: dbo.sysmergearticles (column subset_filterclause = row filter)
+</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ Why this step matters in incidents</div>
+  <p>"The table is missing at the subscriber" is often not a failure at all — the table was never an article,
+  or a <strong>row filter</strong> excludes the rows being searched for, or a <strong>column filter</strong> omits
+  the column the report wants. Run 6a–6c <em>before</em> declaring data loss.</p>
+</div>
+
+<h2>Step 7 — Write it down</h2>
+<p>Capture the output into a one-page map: servers + roles, publications (type, retention, immediate_sync),
+subscriptions (push/pull, agent job name &amp; location, status), filtered articles. This is the document every other
+troubleshooting page assumes you have. Store it with the <a href="../setup/scripting.html">topology creation scripts</a>.</p>
+
+<div class="callout ok">
+  <div class="co-title">✅ Next step in the troubleshooting path</div>
+  <p>Topology mapped? If you're here because something is broken, continue to the
+  <a href="triage-workflow.html">incident triage workflow</a>. If you suspect replication is silently stalled,
+  go straight to <a href="is-it-moving.html">Is replication moving?</a>.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>

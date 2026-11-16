@@ -24,6 +24,16 @@
   </p>
 </header>
 
+<div class="callout ok">
+  <div class="co-title">✅ This page is step 5 of the troubleshooting path</div>
+  <p>Landed here without a diagnosis yet? Start earlier in the path:
+  <a href="discovery.html">1 · map the topology</a> →
+  <a href="triage-workflow.html">2 · triage the incident</a> →
+  <a href="is-it-moving.html">3 · verify what's moving</a> →
+  <a href="lsn-deep-dive.html">4 · pinpoint the stuck LSN</a> → <strong>5 · match the error here</strong> →
+  <a href="risk-areas.html">6 · check the risk list before acting</a>.</p>
+</div>
+
 <h2 id="e20598">Error 20598 — "The row was not found at the Subscriber"</h2>
 <div class="tbl-wrap"><table>
   <tbody>
@@ -118,11 +128,13 @@ EXEC sp_replflush;
 </ul>
 
 <h2>The generic triage ladder (when the error is new to you)</h2>
+<p>The full step-by-step version of this ladder, with queries and a decision tree, is the
+<a href="triage-workflow.html">Incident Triage Workflow</a> page. The short form:</p>
 <ol class="steps">
   <li><strong>Which agent?</strong> Replication Monitor or the watchdog queries → failing/retrying subscription.</li>
   <li><strong>Full error text:</strong> agent session detail or <code>MSrepl_errors</code> (job history truncates).</li>
-  <li><strong>Which of the three queues is backing up?</strong> (<a href="../architecture/overview.html">overview model</a>) — tells you which server to log into.</li>
-  <li><strong>Reproduce understanding:</strong> decode the exact failing command (<code>sp_browsereplcmds</code>) before changing anything.</li>
+  <li><strong>Which of the three queues is backing up?</strong> (<a href="../architecture/overview.html">overview model</a>, verified hop by hop on <a href="is-it-moving.html">Is it moving?</a>) — tells you which server to log into.</li>
+  <li><strong>Reproduce understanding:</strong> decode the exact failing command (<code>sp_browsereplcmds</code>, coordinates explained in the <a href="lsn-deep-dive.html">LSN deep dive</a>) before changing anything.</li>
   <li><strong>Fix forward</strong> (repair row, fix perms, clear block) rather than skip/reinit, unless retention math says reinit is already inevitable.</li>
   <li><strong>Afterwards:</strong> tracer token for flow, validation for convergence, note in the runbook.</li>
 </ol>

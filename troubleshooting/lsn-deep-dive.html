@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — LSN Deep Dive</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="troubleshooting/lsn-deep-dive">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Troubleshooting<span class="sep">›</span>LSN Deep Dive</nav>
+<header class="page-header">
+  <h1>LSNs &amp; xact_seqno — the pipeline's coordinate system</h1>
+  <p class="lead">
+    Every replication watermark, error message, and ordering guarantee is expressed in <strong>Log Sequence
+    Numbers</strong>. This page explains what they are, how to read the publisher's current position, how to find
+    <strong>which transaction and which object</strong> a given LSN points at on the distributor — and how to work
+    out <strong>what is preventing it from moving</strong>.
+  </p>
+</header>
+
+<h2>What an LSN is (and why replication runs on them)</h2>
+<ul>
+  <li>Every record written to a database's transaction log gets a unique, strictly increasing address: the
+      <strong>LSN</strong>, three hex parts — <code>VLF : log block : record</code>, e.g.
+      <code>0000002B : 000001D8 : 0003</code>.</li>
+  <li>Transactional replication is <strong>log-driven</strong>: the Log Reader walks the log by LSN, and a
+      transaction's identity in the pipeline is the LSN of its <strong>commit record</strong>, stored at the
+      distributor as the 10-byte <code>xact_seqno</code> (the three LSN parts concatenated, zero-padded —
+      <code>0x0000002B000001D80003</code>). <em>Same number, two notations.</em></li>
+  <li>Three guarantees hang on it:
+    <ol>
+      <li><strong>Ordering</strong> — agents deliver in <code>xact_seqno</code> order, so the subscriber is always a consistent past snapshot of the publisher.</li>
+      <li><strong>Exactly-once</strong> — each stage records the highest LSN it has safely processed (its <em>watermark</em>) and restarts from there after any interruption.</li>
+      <li><strong>Log truncation safety</strong> — the publisher's log cannot truncate past the oldest LSN not yet harvested; that's why a stuck Log Reader fills the disk (risk ⚠ <em>Log Reader latency</em>).</li>
+    </ol></li>
+</ul>
+
+<div class="diagram">
+  <svg viewBox="0 0 980 300" role="img" aria-label="LSN watermarks along the publisher log and their distributor equivalents">
+    <defs><marker id="lsar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+    <!-- log strip -->
+    <rect x="60" y="80" width="860" height="56" rx="8" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label-sm" x="70" y="70">Publisher transaction log — LSNs increase →</text>
+    <rect x="80"  y="94" width="120" height="28" rx="4" fill="var(--text-muted)" opacity=".35"/>
+    <rect x="215" y="94" width="150" height="28" rx="4" fill="var(--sub)" opacity=".75"/>
+    <rect x="380" y="94" width="190" height="28" rx="4" fill="var(--dist)" opacity=".75"/>
+    <rect x="585" y="94" width="180" height="28" rx="4" fill="var(--pub)" opacity=".8"/>
+    <rect x="780" y="94" width="120" height="28" rx="4" fill="var(--pub)" opacity=".35" class="svg-blink"/>
+
+    <line x1="215" y1="76" x2="215" y2="150" stroke="var(--sub)" stroke-width="2.4"/>
+    <text class="svg-label-xs" x="215" y="170" text-anchor="middle" fill="var(--sub)">delivered to all subscribers</text>
+    <text class="svg-label-xs" x="215" y="185" text-anchor="middle" fill="var(--sub)">(truncation point candidate)</text>
+
+    <line x1="380" y1="76" x2="380" y2="150" stroke="var(--dist)" stroke-width="2.4"/>
+    <text class="svg-label-xs" x="380" y="170" text-anchor="middle" fill="var(--dist)">harvested → in distribution DB</text>
+    <text class="svg-label-xs" x="380" y="185" text-anchor="middle" fill="var(--dist)">(sp_repldone watermark)</text>
+
+    <line x1="585" y1="76" x2="585" y2="150" stroke="var(--pub)" stroke-width="2.4"/>
+    <text class="svg-label-xs" x="585" y="170" text-anchor="middle" fill="var(--pub)">replnextlsn — Log Reader</text>
+    <text class="svg-label-xs" x="585" y="185" text-anchor="middle" fill="var(--pub)">reads from here next</text>
+
+    <line x1="900" y1="76" x2="900" y2="150" stroke="var(--text-muted)" stroke-width="2.4" stroke-dasharray="4 3"/>
+    <text class="svg-label-xs" x="880" y="170" text-anchor="middle">newest commit</text>
+
+    <text class="svg-label-xs" x="490" y="230" text-anchor="middle">Everything LEFT of the purple line exists as xact_seqno rows in the distribution DB.</text>
+    <text class="svg-label-xs" x="490" y="248" text-anchor="middle">The gap between purple and blue = the Log Reader's backlog. The gap between green and purple = kept for undelivered subscribers.</text>
+    <text class="svg-label-xs" x="490" y="266" text-anchor="middle">The log can only truncate LEFT of whichever is older: the green delivered-watermark or the purple harvest-watermark.</text>
+  </svg>
+  <div class="diagram-bar">
+    <span><span class="legend-dot" style="background:var(--sub)"></span>delivered</span>
+    <span><span class="legend-dot" style="background:var(--dist)"></span>harvested, queued</span>
+    <span><span class="legend-dot" style="background:var(--pub)"></span>committed, not yet harvested</span>
+  </div>
+</div>
+
+<h2>Step 1 — Read the publisher's current LSN position</h2>
+<pre data-label="T-SQL — at the PUBLISHER"><code class="sql">USE SalesDB;
+
+-- A. the Log Reader's two watermarks + backlog, one row per published DB
+EXEC sp_replcounters;
+--   replbeginlsn = oldest distributed LSN not yet acknowledged-for-truncation
+--   replnextlsn  = where the Log Reader resumes  ← "current position"
+--   replicated transactions = committed txns between those marks (backlog)
+
+-- B. the same two marks, labeled, plus the oldest open transaction
+DBCC OPENTRAN (N'SalesDB');
+--   "Replicated Transaction Information:
+--      Oldest distributed LSN     : (43:472:3)       ← decimal (VLF:block:record)
+--      Oldest non-distributed LSN : (43:514:1)"      ← first txn NOT yet harvested
+
+-- C. list every committed-but-unharvested transaction with its LSNs
+EXEC sp_repltrans;    -- xdesid = transaction id, LSN pairs (begin/commit), newest at the bottom
+</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ Decimal vs hex — don't compare apples to apples-in-hex</div>
+  <p><code>DBCC OPENTRAN</code> prints LSNs in <strong>decimal</strong> <code>(43:472:3)</code>; <code>sp_replcounters</code>,
+  <code>sp_repltrans</code> and all distributor tables use <strong>hex</strong> (<code>0x0000002B000001D80003</code> —
+  and 43 = 0x2B). Convert before comparing:
+  <code>SELECT CONVERT(varbinary(4), 43) -- 0x0000002B</code> per part, or format the three parts as
+  8+8+4 hex digits and concatenate.</p>
+</div>
+
+<h2>Step 2 — Find that LSN on the distributor: which transaction, which object</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR"><code class="sql">USE distribution;
+
+-- A. does this xact_seqno exist in the queue, and when did it arrive?
+SELECT t.xact_seqno, t.entry_time,
+       commands_in_txn = (SELECT COUNT(*) FROM dbo.MSrepl_commands c
+                          WHERE c.xact_seqno = t.xact_seqno
+                            AND c.publisher_database_id = t.publisher_database_id)
+FROM dbo.MSrepl_transactions t
+WHERE t.xact_seqno = 0x0000002B000001D80003;      -- your LSN in hex
+
+-- B. WHICH OBJECTS (articles) does that transaction touch?
+SELECT DISTINCT a.article, a.source_owner, a.source_object, a.destination_object
+FROM dbo.MSrepl_commands c
+JOIN dbo.MSarticles a ON a.article_id = c.article_id
+                     AND a.publisher_db = (SELECT publisher_db FROM dbo.MSpublisher_databases
+                                           WHERE id = c.publisher_database_id)
+WHERE c.xact_seqno = 0x0000002B000001D80003;
+
+-- C. the exact commands (statement + PK values) at that LSN
+EXEC sp_browsereplcmds
+     @xact_seqno_start = '0x0000002B000001D80003',
+     @xact_seqno_end   = '0x0000002B000001D80003';
+-- → {CALL [sp_MSins_dboOrders] (1234, N'ACME', ...)}  — object AND row identified
+
+-- D. neighborhood view: what sits just before/after (useful when the agent is stuck "near" an LSN)
+SELECT TOP 20 xact_seqno, entry_time
+FROM dbo.MSrepl_transactions
+WHERE xact_seqno >= 0x0000002B000001D80000
+ORDER BY xact_seqno;
+</code></pre>
+
+<h2>Step 3 — The watermark report: where is every stage, in one result?</h2>
+<pre data-label="T-SQL — at the DISTRIBUTOR (plus one line each from publisher/subscriber)"><code class="sql">USE distribution;
+SELECT
+  stage = 'newest harvested (Log Reader wrote)',
+  seqno = MAX(t.xact_seqno), at_time = MAX(t.entry_time)
+FROM dbo.MSrepl_transactions t
+UNION ALL
+SELECT 'last read by Log Reader (its own history)',
+       MAX(h.xact_seqno), MAX(h.time)
+FROM dbo.MSlogreader_history h
+UNION ALL
+SELECT 'last delivered per subscription: ' + a.name,
+       MAX(h.xact_seqno), MAX(h.time)
+FROM dbo.MSdistribution_history h
+JOIN dbo.MSdistribution_agents a ON a.id = h.agent_id
+GROUP BY a.name;
+
+-- publisher side (run there):  EXEC sp_replcounters;          → replnextlsn
+-- subscriber side (run there): SELECT publication, transaction_timestamp
+--                              FROM dbo.MSreplication_subscriptions;  → applied bookmark
+</code></pre>
+<p>Line the numbers up (they're all the same hex coordinate system). The pipeline is healthy when
+<em>publisher replnextlsn ≥ newest harvested ≥ last delivered ≥ subscriber bookmark</em> and <strong>all of them
+advance between two samples</strong> — the first one that freezes names the broken stage
+(same logic as <a href="is-it-moving.html">Is it moving?</a>, now with exact coordinates).</p>
+
+<h2>Step 4 — What is preventing the LSN from moving?</h2>
+
+<h3>Case A — publisher watermark frozen (Log Reader can't advance)</h3>
+<pre data-label="T-SQL — at the PUBLISHER"><code class="sql">-- is a monster transaction being scanned? the log reader's in-memory state:
+SELECT * FROM sys.dm_repl_traninfo;
+-- cmds_in_tran climbing for one transaction = a huge txn being harvested; wait or
+-- consider -MaxCmdsInTran (see performance page). Also: DBCC OPENTRAN for an
+-- old OPEN transaction — an uncommitted txn is invisible to replication but pins the log.
+
+-- articles as the log reader sees them (cache problems show here)
+SELECT * FROM sys.dm_repl_articles;
+</code></pre>
+<ul>
+  <li><strong>Agent down / erroring</strong> — job history + <code>MSlogreader_history.comments</code>; 18752 means another session stole its <code>sp_replcmds</code> slot (<a href="common-errors.html#e20011">fix</a>).</li>
+  <li><strong>Giant transaction</strong> — <code>sys.dm_repl_traninfo</code> shows it being chewed; watermark jumps only when the whole txn is harvested.</li>
+  <li><strong>Broken log chain</strong> (restore over a published DB) — errors 18768/"specified LSN is invalid": the watermark points at log that no longer exists → usually rebuild (risk ⚠ <em>Restoring a published database</em>).</li>
+</ul>
+
+<h3>Case B — delivery watermark frozen (queue grows, subscriber bookmark static)</h3>
+<ul>
+  <li><strong>Retry loop on one command</strong>: the agent re-attempts the <em>same</em> <code>xact_seqno</code> each session (visible in history). Decode it (Step 2C) → match on <a href="common-errors.html">Common Errors</a>. The ordered pipeline means this single LSN dams everything behind it.</li>
+  <li><strong>Blocked apply</strong> at the subscriber: <code>sys.dm_exec_requests</code> where <code>program_name LIKE '%distrib%'</code> → <code>blocking_session_id</code>.</li>
+  <li><strong>Agent stopped / schedule</strong> — pull agents especially: the job lives at the subscriber.</li>
+  <li><strong>Subscription inactive</strong> (status 0 in <code>MSsubscriptions</code>): nothing will ever be delivered — reinit required (error 21074).</li>
+</ul>
+
+<h3>Case C — truncation point frozen (log grows although replication "works")</h3>
+<ul>
+  <li>The truncation point is the <em>older</em> of (a) the harvest watermark and (b) what's still needed for undelivered subscribers when <code>immediate_sync</code>/retention keep commands. One dead subscription can thus pin the publisher's log indirectly — find it with the per-subscription delivered watermarks from Step 3 (the oldest one is your culprit).</li>
+  <li>Verify what the engine itself is waiting for: <code>SELECT log_reuse_wait_desc FROM sys.databases WHERE name='SalesDB'</code> — if it says <code>REPLICATION</code> with no live replication, see the orphaned-metadata runbook in <a href="common-errors.html#elogfull">Common Errors</a>.</li>
+</ul>
+
+<div class="callout danger">
+  <div class="co-title">🛑 Moving watermarks by hand</div>
+  <p>Exactly one supported command moves the harvest watermark: <code>sp_repldone</code> — and the Log Reader
+  is its only legitimate caller. The manual reset
+  (<code>@xactid=NULL, @xact_seqno=NULL, @numtrans=0, @time=0, @reset=1</code>) declares <em>everything</em>
+  harvested: the log frees, and every subscriber silently misses whatever hadn't been delivered — mandatory
+  reinitialization. It is a disk-space-emergency tool, never a latency fix. Full context on the
+  <a href="../commands/publisher-commands.html">publisher commands page</a>.</p>
+</div>
+
+<h2>Reference — where each watermark lives</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Watermark</th><th>Where</th><th>Query</th></tr></thead>
+  <tbody>
+    <tr><td>Log Reader next-read position</td><td><span class="badge pub">Publisher</span></td><td><code>sp_replcounters</code> → <code>replnextlsn</code>; <code>DBCC OPENTRAN</code> → oldest non-distributed LSN</td></tr>
+    <tr><td>Harvest acknowledgment (truncation candidate)</td><td><span class="badge pub">Publisher</span></td><td><code>sp_replcounters</code> → <code>replbeginlsn</code>; advanced by the Log Reader via <code>sp_repldone</code></td></tr>
+    <tr><td>Newest queued transaction</td><td><span class="badge dist">Distributor</span></td><td><code>MAX(xact_seqno)</code> in <code>MSrepl_transactions</code></td></tr>
+    <tr><td>Last delivered batch (per subscription)</td><td><span class="badge dist">Distributor</span></td><td>Latest <code>MSdistribution_history.xact_seqno</code> per agent</td></tr>
+    <tr><td>Applied bookmark (the subscriber's own truth)</td><td><span class="badge sub">Subscriber</span></td><td><code>MSreplication_subscriptions.transaction_timestamp</code></td></tr>
+  </tbody>
+</table></div>
+
+<p>Next in the path: match whatever you found against <a href="common-errors.html">Common Errors</a>, and check the
+action you're about to take against the <a href="risk-areas.html">risk checklist</a>.</p>
+
+</main>
+</div>
+</body>
+</html>
