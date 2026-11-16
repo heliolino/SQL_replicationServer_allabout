@@ -37,6 +37,7 @@
     ]},
     { head: "Monitoring", items: [
       { page: "monitoring/replication-monitor", title: "Replication Monitor", file: "monitoring/replication-monitor.html" },
+      { page: "monitoring/health-check",        title: "Health Check Dashboard", file: "monitoring/health-check.html" },
       { page: "monitoring/tracer-tokens",       title: "Tracer Tokens",       file: "monitoring/tracer-tokens.html" },
       { page: "monitoring/dmvs-and-tables",     title: "DMVs, Procs & Tables",file: "monitoring/dmvs-and-tables.html" },
       { page: "monitoring/alerts",              title: "Alerts & Thresholds", file: "monitoring/alerts.html" },

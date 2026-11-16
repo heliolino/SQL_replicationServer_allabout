@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring — Health Check Dashboard</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="monitoring/health-check">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Monitoring<span class="sep">›</span>Health Check</nav>
+<header class="page-header">
+  <h1>The health check — every component alive, on time, and identical</h1>
+  <p class="lead">
+    One repeatable sweep that turns "is replication OK?" into a scripted <strong>health event</strong>:
+    confirm each component is active and healthy, measure the latency of the pipeline, and verify the
+    replicated tables actually hold the same number of rows. Everything here is copy-paste T-SQL you can
+    run ad hoc or schedule as a logged check.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="8" viewBox="0 0 960 330" role="img" aria-label="Replication health board: the three components and what healthy means for each">
+    <defs><marker id="hcar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <rect x="40" y="70" width="210" height="90" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <circle cx="62" cy="90" r="6" fill="var(--ok)"/>
+    <text class="svg-label" x="145" y="100" text-anchor="middle">Publisher</text>
+    <text class="svg-label-xs" x="145" y="120" text-anchor="middle">Log Reader RUNNING</text>
+    <text class="svg-label-xs" x="145" y="137" text-anchor="middle">log_reuse_wait ≠ stuck</text>
+    <text class="svg-label-xs" x="145" y="195" text-anchor="middle">✔ sp_replcounters latency low</text>
+    <text class="svg-label-xs" x="145" y="212" text-anchor="middle">✔ few pending transactions</text>
+
+    <path d="M375,80 a60,14 0 1,0 120,0 a60,14 0 1,0 -120,0 M375,80 v70 a60,14 0 0,0 120,0 v-70" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.8"/>
+    <circle cx="390" cy="72" r="6" fill="var(--ok)"/>
+    <text class="svg-label-sm" x="435" y="120" text-anchor="middle">distribution</text>
+    <text class="svg-label-xs" x="435" y="195" text-anchor="middle">✔ queue small &amp; draining</text>
+    <text class="svg-label-xs" x="435" y="212" text-anchor="middle">✔ no recent MSrepl_errors</text>
+    <text class="svg-label-xs" x="435" y="229" text-anchor="middle">✔ no inactive subscriptions</text>
+
+    <rect x="700" y="70" width="210" height="90" rx="10" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.8"/>
+    <circle cx="722" cy="90" r="6" fill="var(--ok)"/>
+    <text class="svg-label" x="805" y="100" text-anchor="middle">Subscriber</text>
+    <text class="svg-label-xs" x="805" y="120" text-anchor="middle">Distribution Agent RUNNING</text>
+    <text class="svg-label-xs" x="805" y="137" text-anchor="middle">bookmark advancing</text>
+    <text class="svg-label-xs" x="805" y="195" text-anchor="middle">✔ tracer token within SLA</text>
+    <text class="svg-label-xs" x="805" y="212" text-anchor="middle">✔ row counts match publisher</text>
+
+    <path class="svg-edge" d="M250,115 H372" marker-end="url(#hcar)"/>
+    <path class="svg-edge" d="M495,115 H697" marker-end="url(#hcar)"/>
+    <path d="M250,115 H375" fill="none" stroke="none" data-flow data-start="0.3" data-travel="1.5" data-dots="2" data-gap="0.7" data-color="var(--ok)" data-size="5"/>
+    <path d="M495,115 H700" fill="none" stroke="none" data-flow data-start="2.2" data-travel="1.8" data-dots="2" data-gap="0.7" data-color="var(--ok)" data-size="5"/>
+
+    <text class="svg-label-xs" x="480" y="285" text-anchor="middle">Healthy = every green dot is earned by a query below — never by "the jobs look green in SSMS"</text>
+    <text class="svg-label-xs" x="480" y="305" text-anchor="middle">Alive? → Moving? → On time? → Identical?</text>
+    <g class="risk-marker" data-risk="monitor-blindness" transform="translate(915,45)"><circle r="10"/><text dy="4">⚠</text></g>
+  </svg>
+  <div class="diagram-bar"><span><span class="legend-dot" style="background:var(--ok)"></span>what "healthy" must mean at each component — each claim backed by a check on this page</span></div>
+</div>
+
+<h2>Health is four questions, in order</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>#</th><th>Question</th><th>Answered by</th><th>Fails as</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><strong>Alive?</strong> — are the agents and services running at all?</td><td><a href="#liveness">Component liveness checks</a></td><td>Stopped job, failed login, dead SQL Agent</td></tr>
+    <tr><td>2</td><td><strong>Moving?</strong> — are the watermarks actually advancing?</td><td><a href="../troubleshooting/is-it-moving.html">Is It Moving?</a> (dedicated page)</td><td>Agent "running" but frozen</td></tr>
+    <tr><td>3</td><td><strong>On time?</strong> — is end-to-end latency inside your SLA?</td><td><a href="#latency">Latency measurement</a></td><td>Backlog, slow apply, blocked subscriber</td></tr>
+    <tr><td>4</td><td><strong>Identical?</strong> — do the replicated tables hold the same rows?</td><td><a href="#rowcounts">Row-count &amp; validation checks</a></td><td>Silent divergence (the worst failure mode)</td></tr>
+  </tbody>
+</table></div>
+<p>A system can pass 1 and fail 2 (running-but-stuck), pass 1–3 and fail 4 (someone skipped errors last month).
+Only all four together mean <em>healthy</em>.</p>
+
+<h2 id="liveness">Check 1 — component liveness: is every part active?</h2>
+<ol class="steps">
+  <li>
+    <strong>Is SQL Server Agent itself running on each server?</strong> No Agent service → no replication agents,
+    whatever the job history says. Run on publisher, distributor <em>and</em> subscriber (pull):
+    <pre data-label="T-SQL — every server in the topology"><code class="sql">SELECT servicename, status_desc, last_startup_time
+FROM sys.dm_server_services
+WHERE servicename LIKE N'SQL Server Agent%';
+-- status_desc must be 'Running'</code></pre>
+  </li>
+  <li>
+    <strong>Are the replication jobs in the state they should be in?</strong> Continuous agents (Log Reader,
+    Distribution in default profile, Queue Reader) should show RUNNING; Snapshot and the cleanup jobs run on
+    schedule and should show a recent successful stop:
+    <pre data-label="T-SQL — DISTRIBUTOR (push) / also SUBSCRIBER (pull agents live there)"><code class="sql">SELECT  j.name, category = c.name,
+        state = CASE WHEN a.start_execution_date IS NOT NULL
+                      AND a.stop_execution_date IS NULL
+                     THEN 'RUNNING' ELSE 'stopped' END,
+        a.start_execution_date, a.stop_execution_date
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.syscategories c ON c.category_id = j.category_id
+LEFT JOIN msdb.dbo.sysjobactivity a ON a.job_id = j.job_id
+  AND a.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions)
+WHERE c.name LIKE 'REPL-%'
+ORDER BY c.name, j.name;</code></pre>
+  </li>
+  <li>
+    <strong>Health, not just liveness: the last session verdict per agent.</strong> A job can be RUNNING while the
+    agent inside it is stuck in a retry loop. The history tables tell the truth — <code>runstatus</code> 5
+    (retrying) and 6 (failed) are your incidents, 3/4 (in progress / idle) are healthy:
+    <pre data-label="T-SQL — DISTRIBUTOR: latest state of every agent, failures first"><code class="sql">USE distribution;
+;WITH h AS (
+  SELECT agent_type = 'Log Reader', agent = a.name, h.runstatus, h.start_time,
+         h.comments,
+         rn = ROW_NUMBER() OVER (PARTITION BY h.agent_id ORDER BY h.timestamp DESC)
+  FROM dbo.MSlogreader_history h
+  JOIN dbo.MSlogreader_agents a ON a.id = h.agent_id
+  UNION ALL
+  SELECT 'Distribution', a.name, h.runstatus, h.start_time, h.comments,
+         ROW_NUMBER() OVER (PARTITION BY h.agent_id ORDER BY h.timestamp DESC)
+  FROM dbo.MSdistribution_history h
+  JOIN dbo.MSdistribution_agents a ON a.id = h.agent_id
+  UNION ALL
+  SELECT 'Snapshot', a.name, h.runstatus, h.start_time, h.comments,
+         ROW_NUMBER() OVER (PARTITION BY h.agent_id ORDER BY h.timestamp DESC)
+  FROM dbo.MSsnapshot_history h
+  JOIN dbo.MSsnapshot_agents a ON a.id = h.agent_id
+)
+SELECT agent_type, agent, start_time,
+       state = CASE runstatus WHEN 1 THEN 'Starting'    WHEN 2 THEN 'Succeeded'
+                              WHEN 3 THEN 'In progress' WHEN 4 THEN 'Idle (healthy)'
+                              WHEN 5 THEN 'RETRYING  <<< investigate'
+                              WHEN 6 THEN 'FAILED    <<< incident' END,
+       last_message = comments
+FROM h
+WHERE rn = 1
+ORDER BY CASE runstatus WHEN 6 THEN 0 WHEN 5 THEN 1 ELSE 2 END, agent_type, agent;</code></pre>
+  </li>
+  <li>
+    <strong>The official rollup</strong> — same codes, aggregated per publication/subscription
+    (status 6 = failed, 5 = retrying, with latency columns included):
+    <pre data-label="T-SQL — DISTRIBUTOR"><code class="sql">USE distribution;
+EXEC sp_replmonitorhelppublication  @publisher = N'PUB01';
+EXEC sp_replmonitorhelpsubscription @publisher = N'PUB01', @publication_type = 0;</code></pre>
+    These read the cache table <code>dbo.MSreplication_monitordata</code>, refreshed by the
+    <em>Replication monitoring refresher for distribution</em> job — if that job is stopped, the rollup silently
+    goes stale (⚠ <em>monitor blindness</em> on the <a href="../troubleshooting/risk-areas.html">risk checklist</a>).
+  </li>
+</ol>
+
+<h2 id="snapshot">Check 2 — one health-event snapshot (scriptable)</h2>
+<p>
+  This single result set is the "health event": component / metric / value / verdict, from one connection to the
+  distributor. Green across the board = questions 1 and most of 3 answered.
+</p>
+<pre data-label="T-SQL — DISTRIBUTOR: the health snapshot"><code class="sql">USE distribution;
+SET NOCOUNT ON;
+
+SELECT  component = N'Distributor queue', item = N'commands waiting',
+        value   = CONVERT(nvarchar(30), COUNT_BIG(*)),
+        verdict = CASE WHEN COUNT_BIG(*) &lt; 500000 THEN N'OK' ELSE N'WARN - backlog' END
+FROM dbo.MSrepl_commands WITH (NOLOCK)
+
+UNION ALL
+SELECT  N'Distributor queue', N'newest queued txn age (min)',
+        CONVERT(nvarchar(30), ISNULL(DATEDIFF(MINUTE, MAX(entry_time), GETDATE()), -1)),
+        CASE WHEN MAX(entry_time) IS NULL THEN N'OK - empty'
+             WHEN DATEDIFF(MINUTE, MAX(entry_time), GETDATE()) &lt; 10 THEN N'OK - fresh arrivals'
+             ELSE N'WARN - nothing arriving: Log Reader?' END
+FROM dbo.MSrepl_transactions
+
+UNION ALL
+SELECT  N'Agents', N'errors in last 60 min',
+        CONVERT(nvarchar(30), COUNT_BIG(*)),
+        CASE WHEN COUNT_BIG(*) = 0 THEN N'OK' ELSE N'FAIL - read MSrepl_errors' END
+FROM dbo.MSrepl_errors
+WHERE time &gt; DATEADD(MINUTE, -60, GETDATE())
+
+UNION ALL
+SELECT  N'Subscriptions', N'inactive (status = 0)',
+        CONVERT(nvarchar(30), COUNT_BIG(*)),
+        CASE WHEN COUNT_BIG(*) = 0 THEN N'OK'
+             ELSE N'FAIL - needs reinitialization' END
+FROM dbo.MSsubscriptions
+WHERE status = 0 AND subscriber_db &lt;&gt; N'virtual'
+
+UNION ALL
+SELECT  N'Agents', N'sessions failed/retrying (last 2 h)',
+        CONVERT(nvarchar(30), COUNT_BIG(*)),
+        CASE WHEN COUNT_BIG(*) = 0 THEN N'OK' ELSE N'FAIL - see liveness check 3' END
+FROM dbo.MSdistribution_history
+WHERE runstatus IN (5, 6)
+  AND start_time &gt; DATEADD(HOUR, -2, GETDATE());</code></pre>
+<p>
+  Complete the event with two publisher-side numbers —
+  <code>EXEC sp_replcounters;</code> (pending transaction count + latency per published DB) and
+  <code>SELECT name, log_reuse_wait_desc FROM sys.databases WHERE is_published = 1;</code>
+  (anything stuck on <code>REPLICATION</code> = Log Reader falling behind, see the
+  <a href="../troubleshooting/lsn-deep-dive.html">LSN deep dive</a>).
+</p>
+
+<h2 id="latency">Check 3 — measuring latency</h2>
+<ol class="steps">
+  <li>
+    <strong>Tracer token — the exact, on-demand answer (transactional only).</strong> Posts a marker transaction
+    and timestamps it at each hop; mechanics on the <a href="tracer-tokens.html">tracer tokens page</a>. Fully
+    scriptable as a probe:
+    <pre data-label="T-SQL — PUBLISHER, publication DB"><code class="sql">USE SalesDB;
+DECLARE @token int;
+EXEC sp_posttracertoken @publication = N'SalesPub',
+                        @tracer_token_id = @token OUTPUT;
+
+WAITFOR DELAY '00:00:30';   -- give it time to ride the pipeline
+
+EXEC sp_helptracertokenhistory @publication = N'SalesPub',
+                               @tracer_id   = @token;
+-- distributor_latency  = publisher -> distributor (Log Reader leg)
+-- subscriber_latency   = distributor -> subscriber (Distribution Agent leg)
+-- overall_latency      = end to end;  NULL = token has NOT arrived there yet</code></pre>
+    A token that never completes is itself a finding — go to
+    <a href="../troubleshooting/is-it-moving.html">Is It Moving?</a> to find which hop ate it.
+  </li>
+  <li>
+    <strong>Continuous latency without injecting anything</strong> — the monitor rollup carries a live estimate
+    per subscription:
+    <pre data-label="T-SQL — DISTRIBUTOR"><code class="sql">USE distribution;
+EXEC sp_replmonitorhelpsubscription @publisher = N'PUB01', @publication_type = 0;
+-- 'latency' column (seconds, estimated); status 5/6 override any latency reading</code></pre>
+    Publisher-to-distributor leg only: <code>EXEC sp_replcounters;</code> — the
+    <em>replication latency</em> column, plus throughput in txn/s.
+  </li>
+  <li>
+    <strong>Heartbeat table — latency as data, for any replication type.</strong> Replicate a one-row table that
+    the publisher updates every minute; the subscriber's lag is then an ordinary query, perfect for dashboards
+    and non-transactional topologies where tracer tokens don't exist. Full pattern on
+    <a href="../troubleshooting/is-it-moving.html">Is It Moving?</a>; the measurement itself:
+    <pre data-label="T-SQL — SUBSCRIBER"><code class="sql">SELECT lag_seconds = DATEDIFF(SECOND, last_beat, SYSUTCDATETIME())
+FROM dbo.ReplHeartbeat;   -- replicated article, publisher updates it each minute</code></pre>
+  </li>
+  <li>
+    <strong>Trend it</strong> — Perfmon counters <em>Logreader:Delivery Latency</em> and
+    <em>Dist:Delivery Latency</em> (see the <a href="dmvs-and-tables.html">query toolbox</a>) separate
+    "slow today" from "slow always".
+  </li>
+</ol>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Method</th><th>Measures</th><th>Precision</th><th>Best for</th></tr></thead>
+  <tbody>
+    <tr><td><a href="tracer-tokens.html">Tracer token</a></td><td>Both legs + total, per subscription</td><td>Exact</td><td>On-demand proof, SLA evidence</td></tr>
+    <tr><td><code>sp_replmonitorhelpsubscription</code></td><td>Per-subscription estimate</td><td>Estimated</td><td>Dashboards, the health snapshot above</td></tr>
+    <tr><td><code>sp_replcounters</code></td><td>Publisher → distributor leg only</td><td>Estimated</td><td>Isolating the Log Reader leg</td></tr>
+    <tr><td>Heartbeat table</td><td>True end-to-end, continuously</td><td>Exact (±1 beat)</td><td>Any replication type; alerting on lag</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="rowcounts">Check 4 — are the tables actually identical? Row counts &amp; validation</h2>
+<div class="callout warn">
+  <div class="co-title">⚠ A healthy pipeline makes counts differ — briefly</div>
+  <p>While transactions are in flight, publisher and subscriber counts legitimately disagree by the size of the
+  backlog. Read a row-count difference <em>together with</em> queue depth (check 2): small diff + draining queue =
+  healthy; any diff + empty queue and idle agents = real divergence. Row filters on articles also make counts
+  differ <em>by design</em> — compare filtered articles with the filter applied.</p>
+</div>
+<ol class="steps">
+  <li>
+    <strong>The official way — validation.</strong> Queues a row-count (or row-count + binary checksum)
+    comparison that the Distribution Agent executes and reports in its history; failures raise the 20574-class
+    alerts (wire them on the <a href="alerts.html">alerts page</a>):
+    <pre data-label="T-SQL — PUBLISHER, publication DB"><code class="sql">USE SalesDB;
+-- whole publication
+EXEC sp_publication_validation
+     @publication   = N'SalesPub',
+     @rowcount_only = 1,      -- 1 = row counts only (fast) | 2 = counts + checksum
+     @full_or_fast  = 2;      -- fast counts from metadata where safe
+
+-- or one article only
+EXEC sp_article_validation
+     @publication = N'SalesPub', @article = N'Orders',
+     @rowcount_only = 2, @full_or_fast = 2;
+
+-- results: Distribution Agent history (Replication Monitor or MSdistribution_history)</code></pre>
+  </li>
+  <li>
+    <strong>The instant side-by-side — metadata counts over a linked server.</strong> No agent involvement, runs
+    in seconds even on huge tables, compares <em>only the published articles</em>. Approximate under concurrent
+    DML (reads allocation metadata, not the rows):
+    <pre data-label="T-SQL — PUBLISHER (SUB01 = linked server to the subscriber)"><code class="sql">USE SalesDB;
+;WITH pub AS (
+  SELECT  obj = s.name + N'.' + t.name,
+          pub_rows = SUM(ps.row_count)
+  FROM sys.dm_db_partition_stats ps
+  JOIN sys.tables   t ON t.object_id = ps.object_id
+  JOIN sys.schemas  s ON s.schema_id = t.schema_id
+  JOIN dbo.sysarticles a ON a.objid  = t.object_id     -- published articles only
+  WHERE ps.index_id IN (0, 1)                          -- heap or clustered index = the rows
+  GROUP BY s.name, t.name
+),
+sub AS (
+  SELECT  obj = s.name + N'.' + t.name,
+          sub_rows = SUM(ps.row_count)
+  FROM SUB01.SalesReporting.sys.dm_db_partition_stats ps
+  JOIN SUB01.SalesReporting.sys.tables  t ON t.object_id = ps.object_id
+  JOIN SUB01.SalesReporting.sys.schemas s ON s.schema_id = t.schema_id
+  WHERE ps.index_id IN (0, 1)
+  GROUP BY s.name, t.name
+)
+SELECT  p.obj, p.pub_rows,
+        sub_rows = ISNULL(b.sub_rows, 0),
+        diff     = p.pub_rows - ISNULL(b.sub_rows, 0),
+        verdict  = CASE WHEN b.sub_rows IS NULL       THEN N'FAIL - table missing at subscriber'
+                        WHEN p.pub_rows = b.sub_rows  THEN N'OK'
+                        ELSE N'CHECK - differs (backlog? filter? drift?)' END
+FROM pub p
+LEFT JOIN sub b ON b.obj = p.obj
+ORDER BY ABS(p.pub_rows - ISNULL(b.sub_rows, 0)) DESC;</code></pre>
+  </li>
+  <li>
+    <strong>No linked server? Generate exact COUNT scripts</strong> from the article list and run the output on
+    both sides (exact, but scans; use off-peak for big tables):
+    <pre data-label="T-SQL — PUBLISHER: generates the comparison query"><code class="sql">USE SalesDB;
+SELECT N'SELECT tbl = ''' + s.name + N'.' + t.name + N''', rows = COUNT_BIG(*) FROM '
+       + QUOTENAME(s.name) + N'.' + QUOTENAME(t.name) + N' UNION ALL'
+FROM dbo.sysarticles a
+JOIN sys.tables  t ON t.object_id = a.objid
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+ORDER BY s.name, t.name;
+-- paste the output (drop the last UNION ALL), run at publisher AND subscriber, diff the two grids</code></pre>
+  </li>
+  <li>
+    <strong>Counts match but you still doubt the content?</strong> Row counts can agree while values differ.
+    Escalate to checksum validation (<code>@rowcount_only = 2</code> above) or a row-level diff with repair
+    script generation:
+    <pre data-label="Command line — exact row-level comparison + fix script"><code class="sql">tablediff.exe -sourceserver PUB01 -sourcedatabase SalesDB -sourcetable Orders
+              -destinationserver SUB01 -destinationdatabase SalesReporting
+              -destinationtable Orders -f C:\Temp\fix_Orders.sql</code></pre>
+  </li>
+</ol>
+<div class="callout danger">
+  <div class="co-title">🛑 Never "fix" a difference by making the check pass</div>
+  <p>A real divergence means rows were skipped, written locally, or a reinit went wrong. Repair the data
+  (re-insert, <code>tablediff -f</code>, or reinitialize) and find the cause — usually a
+  <a href="../troubleshooting/common-errors.html#e20598">20598/2627 history</a> or a
+  <code>-SkipErrors</code> someone left behind. Divergence found = start the
+  <a href="../troubleshooting/triage-workflow.html">triage workflow</a> at the data-mismatch branch.</p>
+</div>
+
+<h2 id="schedule">Put it on a schedule — the logged health event</h2>
+<p>Run the snapshot every 5 minutes from a SQL Agent job on the distributor, keep history, and raise an
+alertable error on any FAIL:</p>
+<pre data-label="T-SQL — DISTRIBUTOR: one-time setup + job step body"><code class="sql">USE distribution;
+-- one-time
+CREATE TABLE dbo.ReplHealthLog (
+  logged_at datetime2     NOT NULL DEFAULT SYSUTCDATETIME(),
+  component nvarchar(60)  NOT NULL,
+  item      nvarchar(100) NOT NULL,
+  value     nvarchar(60)  NOT NULL,
+  verdict   nvarchar(80)  NOT NULL
+);
+
+-- job step (every 5 min): insert the health snapshot from check 2
+INSERT dbo.ReplHealthLog (component, item, value, verdict)
+SELECT component, item, value, verdict
+FROM ( /* paste the UNION ALL health snapshot query here */ ) AS snap;
+
+-- then fire an alert if this run produced a failure
+IF EXISTS (SELECT 1 FROM dbo.ReplHealthLog
+           WHERE logged_at &gt; DATEADD(MINUTE, -5, SYSUTCDATETIME())
+             AND verdict LIKE N'FAIL%')
+  RAISERROR('Replication health check FAILED - see distribution.dbo.ReplHealthLog', 16, 1) WITH LOG;
+-- WITH LOG writes to the SQL error log -> catchable by a SQL Agent alert
+-- wire the operator notification on the Alerts page</code></pre>
+<p>Hook the <code>RAISERROR</code> into an operator notification exactly as described on the
+<a href="alerts.html">alerts &amp; thresholds page</a>, and trend <code>ReplHealthLog</code> for capacity
+planning — queue depth and latency creeping up over weeks is the early warning no single snapshot shows.</p>
+
+<h2>What "healthy" looks like — reference thresholds</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Metric</th><th>Healthy</th><th>Investigate when…</th></tr></thead>
+  <tbody>
+    <tr><td>Agent <code>runstatus</code> (last session)</td><td>3 in progress / 4 idle / 2 succeeded</td><td>5 retrying or 6 failed — immediately</td></tr>
+    <tr><td><code>MSrepl_errors</code>, last hour</td><td>0 rows</td><td>Any row — read the full text, it never truncates</td></tr>
+    <tr><td>End-to-end latency (token / heartbeat)</td><td>Inside your SLA (often seconds–minutes)</td><td>Trend rising, or a token that never arrives</td></tr>
+    <tr><td>Queue depth (<code>MSrepl_commands</code>)</td><td>Stable or draining after bursts</td><td>Monotonically growing across snapshots</td></tr>
+    <tr><td>Inactive subscriptions (<code>status = 0</code>)</td><td>0</td><td>Any — retention already expired for it</td></tr>
+    <tr><td>Row-count diff (published articles)</td><td>0, or ≈ backlog size while draining</td><td>Diff with an empty queue, or growing diff</td></tr>
+    <tr><td>Last successful sync age vs retention</td><td>Minutes/hours, far from 72 h default</td><td>Approaching <code>max_distretention</code> — reinit countdown</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout ok">
+  <div class="co-title">✅ When a check fails</div>
+  <p>Any red verdict on this page has a guided follow-up: start the
+  <a href="../troubleshooting/triage-workflow.html">Incident Triage Workflow</a> (step 2 of the troubleshooting
+  path), use <a href="../troubleshooting/is-it-moving.html">Is It Moving?</a> for frozen-but-running agents, the
+  <a href="../troubleshooting/lsn-deep-dive.html">LSN deep dive</a> for a stuck position, and
+  <a href="../troubleshooting/common-errors.html">Common Errors</a> once you have the error number.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>
