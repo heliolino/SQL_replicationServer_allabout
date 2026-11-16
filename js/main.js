@@ -33,7 +33,8 @@
       { page: "setup/configure-distributor", title: "1. Configure Distributor", file: "setup/configure-distributor.html" },
       { page: "setup/create-publication",    title: "2. Create Publication",    file: "setup/create-publication.html" },
       { page: "setup/create-subscription",   title: "3. Create Subscription",   file: "setup/create-subscription.html" },
-      { page: "setup/scripting",             title: "Full T-SQL Script",      file: "setup/scripting.html" }
+      { page: "setup/scripting",             title: "Full T-SQL Script",      file: "setup/scripting.html" },
+      { page: "setup/managed-instance",      title: "Azure SQL MI (Backup Init)", file: "setup/managed-instance.html" }
     ]},
     { head: "Monitoring", items: [
       { page: "monitoring/replication-monitor", title: "Replication Monitor", file: "monitoring/replication-monitor.html" },

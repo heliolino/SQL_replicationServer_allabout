@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Azure SQL Managed Instance (Backup Init)</title>
+<link rel="stylesheet" href="../css/styles.css">
+<link rel="stylesheet" href="../css/animations.css">
+<script defer src="../js/main.js"></script>
+<script defer src="../js/animations.js"></script>
+</head>
+<body data-root="../" data-page="setup/managed-instance">
+<div class="layout">
+<aside id="sidebar"></aside>
+<main>
+
+<nav class="breadcrumbs"><a href="../index.html">Home</a><span class="sep">›</span>Setup &amp; Install<span class="sep">›</span>Azure SQL Managed Instance</nav>
+<header class="page-header">
+  <h1>Transactional replication between SQL Managed Instances — initialized from backup, not snapshot</h1>
+  <p class="lead">
+    Three Azure SQL Managed Instances: a publisher MI, a <strong>dedicated distributor MI</strong>, and a
+    subscriber MI — with the subscriber initialized by <strong>backup &amp; restore</strong> instead of a snapshot.
+    On MI this has a twist that shapes the whole procedure: <em>Microsoft owns the backup chain</em>. Automated
+    backups run when Azure decides, you cannot schedule or trigger them, and you never see the backup files.
+    The initialization below is built around that fact.
+  </p>
+</header>
+
+<div class="diagram">
+  <svg data-animate data-cycle="10" viewBox="0 0 960 400" role="img" aria-label="Three managed instances in a virtual network, with Azure file share working directory and PITR-based initialization">
+    <defs><marker id="miar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)"/></marker></defs>
+
+    <rect x="20" y="30" width="920" height="250" rx="14" fill="none" stroke="var(--text-muted)" stroke-dasharray="6 5" stroke-width="1.2"/>
+    <text class="svg-label-xs" x="40" y="52">Azure virtual network (or peered VNets) — NSG allows 1433 + 11000–11999 between subnets, 445 outbound to storage</text>
+
+    <rect x="50" y="90" width="200" height="90" rx="10" fill="var(--pub-soft)" stroke="var(--pub)" stroke-width="1.8"/>
+    <text class="svg-label" x="150" y="122" text-anchor="middle">Publisher MI</text>
+    <text class="svg-label-xs" x="150" y="142" text-anchor="middle">pub-mi.xxx.database.windows.net</text>
+    <text class="svg-label-xs" x="150" y="160" text-anchor="middle">publication DB + Log Reader</text>
+
+    <rect x="380" y="90" width="200" height="90" rx="10" fill="var(--dist-soft)" stroke="var(--dist)" stroke-width="1.8"/>
+    <text class="svg-label" x="480" y="122" text-anchor="middle">Distributor MI</text>
+    <text class="svg-label-xs" x="480" y="142" text-anchor="middle">dist-mi.xxx.database.windows.net</text>
+    <text class="svg-label-xs" x="480" y="160" text-anchor="middle">distribution DB + agents</text>
+
+    <rect x="710" y="90" width="200" height="90" rx="10" fill="var(--sub-soft)" stroke="var(--sub)" stroke-width="1.8"/>
+    <text class="svg-label" x="810" y="122" text-anchor="middle">Subscriber MI</text>
+    <text class="svg-label-xs" x="810" y="142" text-anchor="middle">sub-mi.xxx.database.windows.net</text>
+    <text class="svg-label-xs" x="810" y="160" text-anchor="middle">DB created by PITR restore</text>
+
+    <path class="svg-edge" d="M250,135 H377" marker-end="url(#miar)"/>
+    <text class="svg-label-xs" x="313" y="125" text-anchor="middle">harvest (1433)</text>
+    <path class="svg-edge" d="M580,135 H707" marker-end="url(#miar)"/>
+    <text class="svg-label-xs" x="643" y="125" text-anchor="middle">push (1433)</text>
+    <path d="M250,135 H380" fill="none" stroke="none" data-flow data-start="0.3" data-travel="1.6" data-dots="2" data-gap="0.7" data-color="var(--pub)" data-size="5"/>
+    <path d="M580,135 H710" fill="none" stroke="none" data-flow data-start="2.3" data-travel="1.6" data-dots="2" data-gap="0.7" data-color="var(--dist)" data-size="5"/>
+
+    <rect x="380" y="215" width="200" height="48" rx="10" fill="var(--surface-2, var(--dist-soft))" stroke="var(--text-muted)" stroke-width="1.2"/>
+    <text class="svg-label-sm" x="480" y="235" text-anchor="middle">Azure Files share</text>
+    <text class="svg-label-xs" x="480" y="252" text-anchor="middle">\\acct.file.core.windows.net\replshare (working dir)</text>
+    <path class="svg-edge" d="M480,180 V212" marker-end="url(#miar)"/>
+
+    <rect x="50" y="310" width="330" height="60" rx="10" fill="none" stroke="var(--warn)" stroke-width="1.6"/>
+    <text class="svg-label-sm" x="215" y="334" text-anchor="middle">Microsoft-managed automated backups</text>
+    <text class="svg-label-xs" x="215" y="352" text-anchor="middle">timing not yours · files not visible · PITR only</text>
+    <path class="svg-edge" d="M380,340 C560,340 700,300 800,185" marker-end="url(#miar)"/>
+    <text class="svg-label-xs" x="640" y="330" text-anchor="middle">Restore-AzSqlInstanceDatabase (point-in-time)</text>
+    <path d="M380,340 C560,340 700,300 800,185" fill="none" stroke="none" data-flow data-start="5.0" data-travel="2.6" data-dots="2" data-gap="0.9" data-color="var(--warn)" data-size="6"/>
+  </svg>
+  <div class="diagram-bar"><span><span class="legend-dot" style="background:var(--warn)"></span>initialization path: the subscriber DB is born from Azure's own automated backups via point-in-time restore</span></div>
+</div>
+
+<div class="callout warn">
+  <div class="co-title">⚠ The MI backup twist — read this before choosing a route</div>
+  <p>On a Managed Instance, Microsoft's service takes all backups automatically; <strong>you cannot schedule,
+  trigger, or access them</strong>. The only backup a user may take is <code>COPY_ONLY ... TO URL</code> — and even
+  that is <strong>blocked when the database uses service-managed TDE</strong> (the default). The classic
+  <code>@sync_type = 'initialize with backup'</code> needs to read the backup media, which it can never do against
+  Azure's hidden backup chain. That leaves two backup/restore routes:</p>
+</div>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Route</th><th>How</th><th>Works when</th><th>Sync type</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>A — PITR + LSN</strong> (recommended)</td>
+      <td>Point-in-time restore of the publisher DB from Azure's automated backups directly onto the subscriber MI, then start delivery from a known LSN</td>
+      <td><strong>Always</strong> — including service-managed TDE; uses exactly the backups Microsoft already takes</td>
+      <td><code>initialize from lsn</code></td>
+    </tr>
+    <tr>
+      <td><strong>B — COPY_ONLY to URL</strong></td>
+      <td>User-taken <code>COPY_ONLY</code> backup to Azure Blob, restore from URL on the subscriber, point the subscription at the backup file</td>
+      <td>Only when the DB is <em>not</em> under service-managed TDE (TDE off, or customer-managed key available on both instances)</td>
+      <td><code>initialize with backup</code>, <code>@backupdevicetype = 'URL'</code></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h2>Step 0 — prerequisites &amp; networking</h2>
+<ul>
+  <li>Three Managed Instances in the <strong>same VNet, or peered VNets</strong>. NSG rules must allow TCP 1433
+      <em>and</em> the redirect range 11000–11999 between the MI subnets, and <strong>outbound 445</strong> to Azure
+      Files (a blocked 445 surfaces later as OS error 53 on the share).</li>
+  <li><strong>SQL Authentication</strong> between all replication participants — create the same strong-password
+      login (e.g. <code>TRANREPLADMIN</code>) on all three instances.</li>
+  <li>An <strong>Azure storage account</strong> with: a <em>file share</em> (the replication working directory —
+      required for the distributor even when you never plan to use snapshots) and, for Route B, a <em>blob
+      container</em> for the backup file.</li>
+  <li>Distributor MI service tier/version <strong>equal to or higher</strong> than the publisher.</li>
+  <li>Push subscriptions only in mixed topologies; MI → MI works as push and that is what this page uses — the
+      Distribution Agent runs at the distributor, close to the queue.</li>
+  <li>For Route A: Azure PowerShell (<code>Az.Sql</code>) and permission to run a point-in-time restore in the
+      subscription.</li>
+</ul>
+
+<h2>Step 1 — configure the dedicated distributor MI</h2>
+<p>Run on <strong>dist-mi</strong>. Same procs as on-box SQL Server (full walkthrough:
+<a href="configure-distributor.html">Configure Distributor</a>), plus the two MI-specific arguments: the Azure
+file share as working directory and the storage key.</p>
+<pre data-label="T-SQL — DISTRIBUTOR MI (dist-mi)"><code class="sql">USE master;
+EXEC sp_adddistributor
+     @distributor = N'dist-mi.abc123xyz.database.windows.net',  -- its own FQDN
+     @password    = N'&lt;distributor_admin_link_password&gt;';
+
+EXEC sp_adddistributiondb
+     @database = N'distribution',
+     @security_mode = 0,
+     @login = N'TRANREPLADMIN', @password = N'&lt;strong password&gt;';
+
+EXEC sp_adddistpublisher
+     @publisher        = N'pub-mi.abc123xyz.database.windows.net',   -- the PUBLISHER MI
+     @distribution_db  = N'distribution',
+     @security_mode    = 0,
+     @login = N'TRANREPLADMIN', @password = N'&lt;strong password&gt;',
+     @working_directory = N'\\replstorage.file.core.windows.net\replshare',
+     @storage_connection_string =
+       N'DefaultEndpointsProtocol=https;AccountName=replstorage;AccountKey=&lt;storage account key&gt;';</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ Backslashes only in the working directory</div>
+  <p><code>\\account.file.core.windows.net\share</code> — forward slashes in this path cause connection
+  errors that look like networking failures. And yes, the working directory is required even for backup
+  initialization: the distributor infrastructure and any later re-snapshot depend on it.</p>
+</div>
+
+<h2>Step 2 — point the publisher MI at the remote distributor</h2>
+<pre data-label="T-SQL — PUBLISHER MI (pub-mi)"><code class="sql">USE master;
+EXEC sp_adddistributor
+     @distributor = N'dist-mi.abc123xyz.database.windows.net',
+     @password    = N'&lt;distributor_admin_link_password&gt;';   -- MUST match step 1</code></pre>
+<p>Verify the link before continuing: <code>EXEC sp_get_distributor;</code> at the publisher must show
+<code>installed = 1</code> and the distributor FQDN.</p>
+
+<h2>Step 3 — create the publication with the backup-init flags</h2>
+<p>Still on <strong>pub-mi</strong>. Two publication properties are what make backup initialization possible at
+all: <code>allow_initialize_from_backup</code> marks a start LSN in the log, and <code>immediate_sync</code> keeps
+delivered commands in the distribution DB for the whole retention window so a subscriber created later can still
+catch up from its restore point.</p>
+<pre data-label="T-SQL — PUBLISHER MI, publication DB"><code class="sql">EXEC sp_replicationdboption @dbname = N'SalesDB', @optname = N'publish', @value = N'true';
+
+USE SalesDB;
+EXEC sp_addlogreader_agent
+     @job_login = NULL, @job_password = NULL,        -- MI runs agents under managed accounts
+     @publisher_security_mode = 0,
+     @publisher_login = N'TRANREPLADMIN', @publisher_password = N'&lt;strong password&gt;';
+
+EXEC sp_addpublication
+     @publication = N'MIPub',
+     @description = N'MI-to-MI transactional, initialized from backup',
+     @repl_freq   = N'continuous',
+     @independent_agent = N'true',
+     @immediate_sync    = N'true',                   -- required for backup/LSN init
+     @allow_initialize_from_backup = N'true',        -- required: marks the init LSN
+     @sync_method = N'native',
+     @allow_push  = N'true', @allow_pull = N'false',
+     @replicate_ddl = 1, @retention = 0;
+
+EXEC sp_addarticle @publication = N'MIPub', @article = N'Orders',
+     @source_owner = N'dbo', @source_object = N'Orders',
+     @type = N'logbased', @identityrangemanagementoption = N'manual';
+-- repeat sp_addarticle per table
+
+EXEC sp_grant_publication_access @publication = N'MIPub', @login = N'TRANREPLADMIN';</code></pre>
+<div class="callout ok">
+  <div class="co-title">✅ Publication already exists? Flip the flags, then refresh the LSNs</div>
+  <pre data-label="T-SQL — PUBLISHER MI"><code class="sql">EXEC sp_changepublication @publication = N'MIPub',
+     @property = N'allow_initialize_from_backup', @value = N'true';
+EXEC sp_changepublication @publication = N'MIPub',
+     @property = N'immediate_sync', @value = N'true';
+-- then run the Snapshot Agent ONCE so the internal LSN markers
+-- (min_autonosync_lsn) are refreshed — no subscriber consumes this snapshot</code></pre>
+</div>
+
+<h2>Step 4 — Route A: initialize from Azure's automated backups (PITR + <code>initialize from lsn</code>)</h2>
+<p>This is the route that embraces the MI reality: you can't take the backup, but Azure already did — a
+point-in-time restore materializes the publisher DB on the subscriber MI at any second you choose. The craft is
+picking a <strong>restore time that maps to a known LSN</strong>, then telling the subscription to deliver
+everything after that LSN.</p>
+<ol class="steps">
+  <li>
+    <strong>Quiesce if you can.</strong> Pausing application writes on the published tables for 15–30 minutes
+    around the chosen point makes the LSN↔time mapping unambiguous and removes every edge case in step 3.
+  </li>
+  <li>
+    <strong>Read the publication's init LSN</strong> at the publisher:
+    <pre data-label="T-SQL — PUBLISHER MI, publication DB"><code class="sql">SELECT name, allow_initialize_from_backup, immediate_sync, min_autonosync_lsn
+FROM dbo.syspublications;
+-- both flags must be 1; min_autonosync_lsn (e.g. 0x000000A0000009F8003E)
+-- is the safe starting LSN — note it down</code></pre>
+  </li>
+  <li>
+    <strong>Map that LSN to a wall-clock time</strong> at the distributor — this becomes your PITR timestamp:
+    <pre data-label="T-SQL — DISTRIBUTOR MI, distribution DB"><code class="sql">USE distribution;
+SELECT TOP 50 xact_seqno, entry_time        -- entry_time is UTC
+FROM dbo.MSrepl_transactions
+WHERE publisher_database_id =
+      (SELECT id FROM dbo.MSpublisher_databases WHERE publisher_db = N'SalesDB')
+ORDER BY xact_seqno;
+-- find the transactions bracketing your min_autonosync_lsn and pick a
+-- point-in-time BETWEEN them (a quiesced gap makes this trivial)</code></pre>
+  </li>
+  <li>
+    <strong>Point-in-time restore the publisher DB onto the subscriber MI.</strong> PowerShell, because the
+    portal rounds the seconds you need:
+    <pre data-label="PowerShell — PITR across instances (same subscription)"><code class="sql">Connect-AzAccount
+Set-AzContext -SubscriptionId "&lt;subscription-id&gt;"
+
+Restore-AzSqlInstanceDatabase -FromPointInTimeBackup `
+  -ResourceGroupName   "rg-replication" `
+  -InstanceName        "pub-mi" `
+  -Name                "SalesDB" `
+  -PointInTime         "2026-11-16T13:16:54Z" `      # UTC, between the bracketing txns
+  -TargetResourceGroupName    "rg-replication" `
+  -TargetInstanceName         "sub-mi" `
+  -TargetInstanceDatabaseName "SalesDB"</code></pre>
+    The restore brings the <em>whole database</em> — including tables that aren't articles. Fine for a
+    full-database publication; if you publish 3 tables out of 3,000, a snapshot might honestly be cheaper.
+  </li>
+  <li>
+    <strong>Fix security on the restored DB</strong> (sub-mi): create/repair the <code>TRANREPLADMIN</code> login,
+    map it into <code>SalesDB</code>, add to <code>db_owner</code> — the Distribution Agent connects as it.
+  </li>
+  <li>
+    <strong>Create the subscription from the LSN</strong> — no backup device, just the coordinate:
+    <pre data-label="T-SQL — PUBLISHER MI, publication DB"><code class="sql">EXEC sp_addsubscription
+     @publication       = N'MIPub',
+     @subscriber        = N'sub-mi.abc123xyz.database.windows.net',
+     @destination_db    = N'SalesDB',
+     @subscription_type = N'Push',
+     @article           = N'all',
+     @update_mode       = N'read only',
+     @subscriber_type   = 0,
+     @sync_type         = N'initialize from lsn',
+     @subscriptionlsn   = 0x000000A0000009F8003E;   -- binary literal, NO quotes
+
+EXEC sp_addpushsubscription_agent
+     @publication   = N'MIPub',
+     @subscriber    = N'sub-mi.abc123xyz.database.windows.net',
+     @subscriber_db = N'SalesDB',
+     @subscriber_security_mode = 0,
+     @subscriber_login = N'TRANREPLADMIN', @subscriber_password = N'&lt;strong password&gt;',
+     @job_login = NULL, @job_password = NULL,
+     @frequency_type = 64;                           -- run continuously</code></pre>
+  </li>
+  <li>
+    <strong>Verify, then un-quiesce.</strong> Replication Monitor (or the
+    <a href="../monitoring/health-check.html">health check sweep</a>) should show the agent delivering; post a
+    <a href="../monitoring/tracer-tokens.html">tracer token</a> and compare
+    <a href="../monitoring/health-check.html#rowcounts">row counts</a>.
+  </li>
+</ol>
+<div class="callout danger">
+  <div class="co-title">🛑 Picked the wrong LSN or time?</div>
+  <p>The symptoms are immediate and recognizable: <a href="../troubleshooting/common-errors.html#e20598">20598
+  (row not found)</a> if the restore point is <em>ahead</em> of your LSN (commands replay against rows that
+  already changed), or <a href="../troubleshooting/common-errors.html#e2627">2601/2627 duplicates</a> if it is
+  <em>behind</em> (inserts re-applied). Decode what the agent is trying to apply with
+  <code>sp_browsereplcmds</code> (coordinates explained in the
+  <a href="../troubleshooting/lsn-deep-dive.html">LSN deep dive</a>), drop the subscription, adjust
+  <code>@subscriptionlsn</code> or the PITR time, and repeat — the restore is cheap to redo.</p>
+</div>
+
+<h2>Step 4 — Route B: user-taken <code>COPY_ONLY</code> backup to URL (when TDE allows)</h2>
+<p>If the database is <strong>not</strong> protected by service-managed TDE (TDE disabled, or customer-managed
+key present on <em>both</em> instances), you can take the one kind of backup MI permits and use the classic
+mechanism. The backup must be taken <em>after</em> step 3's flags are enabled.</p>
+<pre data-label="T-SQL — ① both MIs: SAS credential · ② pub-mi: backup · ③ sub-mi: restore"><code class="sql">-- ① on BOTH instances (master): credential named exactly as the container URL
+CREATE CREDENTIAL [https://replstorage.blob.core.windows.net/backups]
+WITH IDENTITY = 'SHARED ACCESS SIGNATURE',
+     SECRET   = '&lt;SAS token without leading ?&gt;';
+
+-- ② PUBLISHER MI — COPY_ONLY is the only full backup MI allows you
+BACKUP DATABASE SalesDB
+TO URL = N'https://replstorage.blob.core.windows.net/backups/SalesDB_init.bak'
+WITH COPY_ONLY, COMPRESSION, INIT;
+
+-- ③ SUBSCRIBER MI
+RESTORE DATABASE SalesDB
+FROM URL = N'https://replstorage.blob.core.windows.net/backups/SalesDB_init.bak';</code></pre>
+<pre data-label="T-SQL — PUBLISHER MI: subscription reads the backup header from the URL"><code class="sql">EXEC sp_addsubscription
+     @publication       = N'MIPub',
+     @subscriber        = N'sub-mi.abc123xyz.database.windows.net',
+     @destination_db    = N'SalesDB',
+     @subscription_type = N'Push',
+     @article           = N'all',
+     @update_mode       = N'read only',
+     @subscriber_type   = 0,
+     @sync_type         = N'initialize with backup',
+     @backupdevicetype  = N'URL',
+     @backupdevicename  = N'https://replstorage.blob.core.windows.net/backups/SalesDB_init.bak';
+-- the LSN is read from the backup header: every transaction committed AFTER
+-- the backup is delivered automatically — no quiesce required
+-- then sp_addpushsubscription_agent exactly as in Route A</code></pre>
+<div class="callout warn">
+  <div class="co-title">⚠ Route B fails on service-managed TDE — by design</div>
+  <p><code>BACKUP ... WITH COPY_ONLY</code> is refused for databases encrypted with a service-managed key
+  (the key can't leave Azure's control, so the backup would be unrestorable anyway). That is precisely why
+  Route A exists: the PITR path never needs the backup file in your hands. Don't disable TDE just to use
+  Route B.</p>
+</div>
+
+<h2>Timing: the two clocks running against you</h2>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Clock</th><th>Default</th><th>Why it matters here</th></tr></thead>
+  <tbody>
+    <tr><td>Distribution retention (<code>max_distretention</code>)</td><td>72 h</td><td>The restore point must be newer than the oldest commands still in the distribution DB — finish restore + subscription creation well inside this window, or start over</td></tr>
+    <tr><td><code>immediate_sync</code> command retention</td><td>full retention window (336 h publication default)</td><td>Required for this init method, but it keeps <em>all</em> delivered commands for the window — watch distribution DB growth (⚠ <em>distribution DB growth</em> on the <a href="../troubleshooting/risk-areas.html">risk checklist</a>)</td></tr>
+  </tbody>
+</table></div>
+
+<h2>Verification checklist</h2>
+<ul>
+  <li>☐ <code>sp_replcounters</code> on pub-mi: latency seconds, not hours; pending count draining</li>
+  <li>☐ Agent state sweep on dist-mi: Log Reader + Distribution Agent "In progress/Idle"
+      (<a href="../monitoring/health-check.html#liveness">health check, check 1</a>)</li>
+  <li>☐ Tracer token completes end-to-end (<a href="../monitoring/tracer-tokens.html">how</a>)</li>
+  <li>☐ Row counts match per article (<a href="../monitoring/health-check.html#rowcounts">health check, check 4</a>)</li>
+  <li>☐ A test INSERT at pub-mi arrives at sub-mi within the SLA</li>
+  <li>☐ NSG review: 1433 + 11000–11999 between MI subnets, 445 outbound to storage still green after any network change</li>
+</ul>
+
+<div class="callout ok">
+  <div class="co-title">✅ Sources &amp; further reading</div>
+  <p>Microsoft Learn: <a href="https://learn.microsoft.com/azure/azure-sql/managed-instance/replication-transactional-overview">Transactional
+  replication with Azure SQL Managed Instance</a> and the
+  <a href="https://learn.microsoft.com/azure/azure-sql/managed-instance/replication-between-two-instances-configure-tutorial">two-instance
+  configuration tutorial</a>. The backup-initialization routes are based on the Azure Database Support Blog:
+  <a href="https://techcommunity.microsoft.com/blog/azuredbsupport/initialize-a-managed-instance-replication-subscriber-with-a-pitr-backup/3698816">Initialize
+  a Managed Instance replication Subscriber with a PITR backup</a> (Route A) and
+  <a href="https://techcommunity.microsoft.com/blog/azuredbsupport/initialize-a-managed-instance-replication-subscriber-with-a-backup/3698750">…with
+  a backup</a> (Route B / URL device). Validate both routes in non-production first — the PITR+LSN technique is
+  support-blog guidance, not a boxed product feature.</p>
+</div>
+
+</main>
+</div>
+</body>
+</html>
